@@ -1,0 +1,51 @@
+# CMake build directories
+build/
+out/
+bin/
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# IDEs and Editors
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.xcodeproj/
+*.xcworkspace/
+
+# Compiled Binaries (User is distributing via GitHub Releases)
+*.exe
+*.dll
+*.vst3
+*.a
+*.so
+*.dylib
+*.lib
+*.exp
+
+# Scratch and temporary files
+scratch_resized.txt
+*.log
+*.tmp
+*.bak
+*.swp
+
+# macOS specific
+.DS_Store
+
+# Windows specific
+Thumbs.db
+vst2sdk/
+Releases/
