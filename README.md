@@ -2,7 +2,11 @@
 
 **WaveSlave** is a powerful, highly-customizable 16-partial additive synthesizer plugin built with C++ and the JUCE framework. It combines the mathematical precision of harmonic stacking with organic, per-partial modulation and the ability to hand-draw custom waveforms.
 
-![WaveSlave Interface](https://github.com/JacobHepworth/WaveSlave/assets/placeholder-image.png) *(Note: Add a screenshot of the UI here!)*
+![WaveSlave Polar Overview](assets/screenshot_polar.png)
+
+*An intuitive polar and cartesian visualizer with a rich, dark UI.*
+![WaveSlave Harmonic Modulation](assets/screenshot_modulation.png)
+![WaveSlave Clean Interface](assets/screenshot_clean.png)
 
 ## Features
 
