@@ -2,12 +2,6 @@
 
 **WaveSlave** is a powerful, highly-customizable 16-partial additive synthesizer plugin built with C++ and the JUCE framework. It combines the mathematical precision of harmonic stacking with organic, per-partial modulation and the ability to hand-draw custom waveforms.
 
-![WaveSlave Polar Overview](assets/screenshot_polar.png)
-
-*An intuitive polar and cartesian visualizer with a rich, dark UI.*
-![WaveSlave Harmonic Modulation](assets/screenshot_modulation.png)
-![WaveSlave Clean Interface](assets/screenshot_clean.png)
-
 ## Features
 
 * **16-Partial Additive Synthesis**: Stack up to 16 individual sine, triangle, saw, or square waves to construct complex tones.
@@ -20,6 +14,11 @@
 * **Interactive Visualizers**: Real-time oscilloscope (with standard and polar views) and spectrograph to visualize your sound in action.
 * **Factory Presets**: Includes a library of handcrafted patches, from 8-bit chiptunes to lush pads, drawbar organs, and the chaotic "Too Much Glue!" preset.
 
+## Examples
+![WaveSlave Polar Overview](assets/screenshot_polar.png)
+![WaveSlave Harmonic Modulation](assets/screenshot_modulation.png)
+![WaveSlave Clean Interface](assets/screenshot_clean.png)
+
 ## Installation
 
 You do not need to compile the code yourself to use WaveSlave! 
@@ -27,7 +26,6 @@ You do not need to compile the code yourself to use WaveSlave!
 Compiled binaries are available in the **[Releases](../../releases)** tab for Windows:
 * **Standalone Application** (`WaveSlave.exe`)
 * **VST3 Plugin** (Drop into `C:\Program Files\Common Files\VST3`)
-* **VST Plugin** (Drop into your 64-bit VST2 directory)
 
 ## Building from Source
 
