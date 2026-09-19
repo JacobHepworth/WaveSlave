@@ -15,9 +15,8 @@
 * **Factory Presets**: Includes a library of handcrafted patches, from 8-bit chiptunes to lush pads, drawbar organs, and the chaotic "Too Much Glue!" preset.
 
 ## Examples
+![WaveSlave Harmonics Interface](assets/screenshot_harmonics.png)
 ![WaveSlave Polar Overview](assets/screenshot_polar.png)
-![WaveSlave Harmonic Modulation](assets/screenshot_modulation.png)
-![WaveSlave Clean Interface](assets/screenshot_clean.png)
 
 ## Installation
 

@@ -5,7 +5,6 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
     : AudioProcessorEditor (&p), audioProcessor (p), oscilloscope(p), spectrograph(p)
 {
     setLookAndFeel(&customLookAndFeel);
-    setSize (900, 650);
 
     // Visualizers
     addAndMakeVisible(oscilloscope);
@@ -264,16 +263,23 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
     int initialCount = (int)audioProcessor.apvts.getRawParameterValue("NUM_PARTIALS")->load();
     partialsContainer.setActiveCount(initialCount);
     partialsComboBox.setSelectedId(initialCount + 1, juce::dontSendNotification);
+    bool hasPartials = (initialCount > 0);
+    partialsLabel.setVisible(hasPartials);
+    partialsViewport.setVisible(hasPartials);
     if (initialCount == 0)
         partialsLabel.setText("HARMONICS (No active partials)", juce::dontSendNotification);
     else
         partialsLabel.setText("HARMONICS (Showing " + juce::String(initialCount) + " of 16 active partials)", juce::dontSendNotification);
 
     audioProcessor.apvts.state.addListener(this);
+    audioProcessor.apvts.addParameterListener("NUM_PARTIALS", this);
+
+    setSize (900, 650);
 }
 
 WaveSlaveAudioProcessorEditor::~WaveSlaveAudioProcessorEditor()
 {
+    audioProcessor.apvts.removeParameterListener("NUM_PARTIALS", this);
     audioProcessor.apvts.state.removeListener(this);
     setLookAndFeel(nullptr);
 }
@@ -287,7 +293,7 @@ void WaveSlaveAudioProcessorEditor::paint (juce::Graphics& g)
     g.fillAll();
 
     // Visualizers & Master Left Area
-    int numPartials = (int)audioProcessor.apvts.getRawParameterValue("NUM_PARTIALS")->load();
+    int numPartials = partialsContainer.getActiveCount();
     int harmonicsWidth = (numPartials > 0) ? 246 : 0;
     
     float leftWidth = (numPartials > 0) ? (float)getWidth() - harmonicsWidth - 24.0f : (float)getWidth() - 20.0f;
@@ -308,6 +314,40 @@ void WaveSlaveAudioProcessorEditor::paint (juce::Graphics& g)
     }
 }
 
+void WaveSlaveAudioProcessorEditor::parameterChanged(const juce::String& parameterID, float newValue)
+{
+    if (parameterID == "NUM_PARTIALS")
+    {
+        int count = (int)std::round(newValue);
+        juce::MessageManager::callAsync([this, count]()
+        {
+            if (partialsComboBox.getSelectedId() != count + 1)
+                partialsComboBox.setSelectedId(count + 1, juce::dontSendNotification);
+            updatePartialsLayout(count);
+        });
+    }
+}
+
+void WaveSlaveAudioProcessorEditor::updatePartialsLayout(int count)
+{
+    count = juce::jlimit(0, 16, count);
+    partialsContainer.setActiveCount(count);
+    
+    bool hasPartials = (count > 0);
+    partialsLabel.setVisible(hasPartials);
+    partialsViewport.setVisible(hasPartials);
+    
+    if (hasPartials)
+        partialsLabel.setText("HARMONICS (Showing " + juce::String(count) + " of 16 active partials)", juce::dontSendNotification);
+    else
+        partialsLabel.setText("HARMONICS (No active partials)", juce::dontSendNotification);
+
+    resized();
+    repaint();
+    spectrograph.repaint();
+    oscilloscope.repaint();
+}
+
 void WaveSlaveAudioProcessorEditor::setNumPartials(int numPartials)
 {
     if (auto* p = audioProcessor.apvts.getParameter("NUM_PARTIALS"))
@@ -316,22 +356,7 @@ void WaveSlaveAudioProcessorEditor::setNumPartials(int numPartials)
         p->setValueNotifyingHost(p->convertTo0to1((float)numPartials));
         p->endChangeGesture();
     }
-    partialsContainer.setActiveCount(numPartials);
-    
-    bool hasPartials = (numPartials > 0);
-    partialsLabel.setVisible(hasPartials);
-    partialsViewport.setVisible(hasPartials);
-    
-    if (hasPartials)
-        partialsLabel.setText("HARMONICS (" + juce::String(numPartials) + " of 16)", juce::dontSendNotification);
-
-    partialsContainer.setSize(partialsViewport.getWidth() - 14, PartialsContainer::stripCardHeight * numPartials);
-    partialsContainer.resized();
-    
-    // Trigger repaint of the main window so the background frame disappears
-    repaint();
-    spectrograph.repaint();
-    oscilloscope.repaint();
+    updatePartialsLayout(numPartials);
 }
 
 void WaveSlaveAudioProcessorEditor::applyBulkWaveform(int waveTypeIndex)
@@ -567,7 +592,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
         applyBulkModDepth(0.08f);
         for (int i = 1; i <= 16; ++i) {
             if (auto* p = audioProcessor.apvts.getParameter("MOD_RATE" + juce::String(i))) { p->beginChangeGesture(); p->setValueNotifyingHost(p->convertTo0to1(0.2f + i * 0.1f)); p->endChangeGesture(); }
-            if (auto* p = audioProcessor.apvts.getParameter("MOD_PHASE" + juce::String(i))) { p->beginChangeGesture(); p->setValueNotifyingHost(p->convertTo0to1((i * 45) % 360)); p->endChangeGesture(); }
+            if (auto* p = audioProcessor.apvts.getParameter("MOD_PHASE" + juce::String(i))) { p->beginChangeGesture(); p->setValueNotifyingHost(p->convertTo0to1((float)((i * 45) % 360))); p->endChangeGesture(); }
         }
         if (auto* p = audioProcessor.apvts.getParameter("ATTACK")) { p->beginChangeGesture(); p->setValueNotifyingHost(p->convertTo0to1(2.0f)); p->endChangeGesture(); }
         if (auto* p = audioProcessor.apvts.getParameter("DECAY")) { p->beginChangeGesture(); p->setValueNotifyingHost(p->convertTo0to1(1.0f)); p->endChangeGesture(); }
@@ -674,7 +699,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
         for (int i = 1; i <= 16; ++i) {
             if (auto* p = audioProcessor.apvts.getParameter("MOD_RATE" + juce::String(i))) { p->beginChangeGesture(); p->setValueNotifyingHost(p->convertTo0to1(0.1f * i)); p->endChangeGesture(); }
             if (auto* p = audioProcessor.apvts.getParameter("MOD_WAVEFORM" + juce::String(i))) { p->beginChangeGesture(); p->setValueNotifyingHost(p->convertTo0to1(0.0f)); p->endChangeGesture(); }
-            if (auto* p = audioProcessor.apvts.getParameter("MOD_PHASE" + juce::String(i))) { p->beginChangeGesture(); p->setValueNotifyingHost(p->convertTo0to1((i * 67) % 360)); p->endChangeGesture(); }
+            if (auto* p = audioProcessor.apvts.getParameter("MOD_PHASE" + juce::String(i))) { p->beginChangeGesture(); p->setValueNotifyingHost(p->convertTo0to1((float)((i * 67) % 360))); p->endChangeGesture(); }
         }
         if (auto* p = audioProcessor.apvts.getParameter("ATTACK")) { p->beginChangeGesture(); p->setValueNotifyingHost(p->convertTo0to1(3.0f)); p->endChangeGesture(); }
         if (auto* p = audioProcessor.apvts.getParameter("DECAY")) { p->beginChangeGesture(); p->setValueNotifyingHost(p->convertTo0to1(2.0f)); p->endChangeGesture(); }
@@ -749,14 +774,14 @@ void WaveSlaveAudioProcessorEditor::resized()
     auto mainWorkspace = area.reduced(10);
 
     // Right-Side Harmonics Pane
-    int numPartials = (int)audioProcessor.apvts.getRawParameterValue("NUM_PARTIALS")->load();
+    int numPartials = partialsContainer.getActiveCount();
     int harmonicsWidth = (numPartials > 0) ? 246 : 0;
     auto rightPane = mainWorkspace.removeFromRight(harmonicsWidth);
 
     partialsLabel.setBounds(rightPane.removeFromTop(20));
     rightPane.removeFromTop(4);
     partialsViewport.setBounds(rightPane);
-    partialsContainer.setSize(partialsViewport.getWidth() - 14, PartialsContainer::stripCardHeight * partialsContainer.getActiveCount());
+    partialsContainer.setSize(juce::jmax(10, partialsViewport.getWidth() - 14), PartialsContainer::stripCardHeight * partialsContainer.getActiveCount());
     partialsContainer.resized();
 
     if (numPartials > 0)

@@ -315,7 +315,9 @@ private:
 };
 
 //==============================================================================
-class WaveSlaveAudioProcessorEditor : public juce::AudioProcessorEditor, public juce::ValueTree::Listener
+class WaveSlaveAudioProcessorEditor : public juce::AudioProcessorEditor,
+                                      public juce::ValueTree::Listener,
+                                      public juce::AudioProcessorValueTreeState::Listener
 {
 public:
     enum class VisualizerMode { Dual, HarmonicsOnly, ScopeOnly, SpectroscopeOnly, PolarScope };
@@ -326,9 +328,8 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-
-
     void setNumPartials(int newCount);
+    void updatePartialsLayout(int count);
     void applyBulkWaveform(int waveTypeIndex);
     void applyBulkHarmonicSeries(int seriesType);
     void applyBulkGainTilt(int tiltType);
@@ -339,11 +340,13 @@ public:
     void resetAllPartials();
     void applyFactoryPreset(int index);
 
+    void parameterChanged(const juce::String& parameterID, float newValue) override;
+
     void valueTreePropertyChanged(juce::ValueTree& treeWhosePropertyHasChanged, const juce::Identifier& property) override;
-    void valueTreeChildAdded(juce::ValueTree& parentTree, juce::ValueTree& childWhichHasBeenAdded) override {}
-    void valueTreeChildRemoved(juce::ValueTree& parentTree, juce::ValueTree& childWhichHasBeenRemoved, int indexFromWhichChildWasRemoved) override {}
-    void valueTreeChildOrderChanged(juce::ValueTree& parentTreeWhoseChildrenHaveMoved, int oldIndex, int newIndex) override {}
-    void valueTreeParentChanged(juce::ValueTree& treeWhoseParentHasChanged) override {}
+    void valueTreeChildAdded(juce::ValueTree&, juce::ValueTree&) override {}
+    void valueTreeChildRemoved(juce::ValueTree&, juce::ValueTree&, int) override {}
+    void valueTreeChildOrderChanged(juce::ValueTree&, int, int) override {}
+    void valueTreeParentChanged(juce::ValueTree&) override {}
 
 private:
     WaveSlaveAudioProcessor& audioProcessor;

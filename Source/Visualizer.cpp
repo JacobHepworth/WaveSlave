@@ -642,10 +642,10 @@ void Spectrograph::paint(juce::Graphics& g)
 
     auto inner = bounds.reduced(12.0f);
     auto left   = inner.getX();
-    auto top    = inner.getY() + 18.0f;
+    auto top    = inner.getY() + 24.0f;
     auto width  = inner.getWidth();
     // Reserve 28px at the bottom for harmonic labels and frequencies
-    auto height = inner.getHeight() - 46.0f;
+    auto height = inner.getHeight() - 52.0f;
 
     // Grid lines
     g.setColour(juce::Colour(0xFF1A1A1A));
@@ -980,20 +980,20 @@ void Spectrograph::paint(juce::Graphics& g)
     g.setColour(juce::Colour(0xFFFFFFFF)); // less neon
     g.setFont(juce::Font(11.0f, juce::Font::bold));
     juce::String titleStr = "SPECTRUM (Base: " + juce::String((int)std::round(baseFreq)) + " Hz)";
-    g.drawText(titleStr, (int)left, 2, (int)width, 14, juce::Justification::centredLeft);
+    g.drawText(titleStr, (int)left, 4, (int)width, 14, juce::Justification::centredLeft);
 
     g.setColour(juce::Colours::white.withAlpha(0.45f));
     g.setFont(9.5f);
-    g.drawText("Drag: Ratio & Gain - Alt: Snap - Shift: Detune - Ctrl: Note", (int)left, 16, (int)width, 12, juce::Justification::centredLeft);
+    g.drawText("Drag: Ratio & Gain - Alt: Snap - Shift: Detune - Ctrl: Note", (int)left + 42, 18, (int)width - 42, 12, juce::Justification::centredLeft);
 }
 
 int Spectrograph::findPartialAt(float mouseX, float mouseY)
 {
     auto inner = getLocalBounds().toFloat().reduced(12.0f);
     float left = inner.getX();
-    float top = inner.getY() + 18.0f;
+    float top = inner.getY() + 24.0f;
     float width = inner.getWidth();
-    float height = inner.getHeight() - 46.0f;
+    float height = inner.getHeight() - 52.0f;
 
     int numActive = (int)processor.apvts.getRawParameterValue("NUM_PARTIALS")->load();
     numActive = juce::jlimit(0, 16, numActive);
@@ -1181,9 +1181,9 @@ void Spectrograph::mouseDrag(const juce::MouseEvent& e)
 
     auto inner = getLocalBounds().toFloat().reduced(12.0f);
     float left = inner.getX();
-    float top = inner.getY() + 18.0f;
+    float top = inner.getY() + 24.0f;
     float width = inner.getWidth();
-    float height = inner.getHeight() - 46.0f;
+    float height = inner.getHeight() - 52.0f;
 
     auto idSuffix = juce::String(draggedPartial + 1);
 
