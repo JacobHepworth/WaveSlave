@@ -46,10 +46,7 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
     };
     
     addChildComponent(regenerateButton);
-    regenerateButton.setButtonText("Regenerate");
     regenerateButton.setTooltip("Regenerate a new random sound profile");
-    regenerateButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF262626));
-    regenerateButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFFE0E0E0));
     regenerateButton.onClick = [this]()
     {
         juce::Component::SafePointer<WaveSlaveAudioProcessorEditor> safeThis(this);
@@ -2390,12 +2387,13 @@ void WaveSlaveAudioProcessorEditor::resized()
     // Right side: Partials count dropdown (aligned directly above right partials column) + Preset selector
     partialsComboBox.setBounds(headerArea.removeFromRight(120));
     headerArea.removeFromRight(8);
+    factoryPresetBox.setBounds(headerArea.removeFromRight(150));
     if (regenerateButton.isVisible())
     {
-        regenerateButton.setBounds(headerArea.removeFromRight(88).reduced(0, 1));
-        headerArea.removeFromRight(6);
+        headerArea.removeFromRight(4);
+        int btnSize = headerArea.getHeight();
+        regenerateButton.setBounds(headerArea.removeFromRight(btnSize));
     }
-    factoryPresetBox.setBounds(headerArea.removeFromRight(150));
 
     // Main workspace below header
     auto mainWorkspace = area.reduced(10);

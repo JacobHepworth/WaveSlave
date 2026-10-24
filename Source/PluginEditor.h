@@ -1266,6 +1266,68 @@ private:
 };
 
 //==============================================================================
+class ReloadButton : public juce::Button
+{
+public:
+    ReloadButton() : juce::Button("Reload") {}
+
+    void paintButton(juce::Graphics& g, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override
+    {
+        auto bounds = getLocalBounds().toFloat().reduced(1.0f);
+
+        juce::Colour bg = shouldDrawButtonAsDown ? juce::Colour(0xFF383838)
+                        : shouldDrawButtonAsHighlighted ? juce::Colour(0xFF2E2E2E)
+                        : juce::Colour(0xFF222222);
+
+        g.setColour(bg);
+        g.fillRoundedRectangle(bounds, 4.0f);
+
+        g.setColour(shouldDrawButtonAsHighlighted ? juce::Colour(0xFF666666) : juce::Colour(0xFF383838));
+        g.drawRoundedRectangle(bounds, 4.0f, 1.0f);
+
+        float cx = bounds.getCentreX();
+        float cy = bounds.getCentreY();
+        float r = juce::jmin(bounds.getWidth(), bounds.getHeight()) * 0.28f;
+
+        float fromAngle = juce::degreesToRadians(45.0f);
+        float toAngle   = juce::degreesToRadians(330.0f);
+
+        juce::Path arc;
+        arc.addCentredArc(cx, cy, r, r, 0.0f, fromAngle, toAngle, true);
+
+        juce::Colour iconCol = shouldDrawButtonAsDown ? juce::Colours::white
+                             : shouldDrawButtonAsHighlighted ? juce::Colour(0xFFF0F0F0)
+                             : juce::Colour(0xFFD0D0D0);
+
+        g.setColour(iconCol);
+        g.strokePath(arc, juce::PathStrokeType(1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+        // Arrow head at end of arc (clockwise motion)
+        float sinA = std::sin(toAngle);
+        float cosA = std::cos(toAngle);
+        float endX = cx + r * sinA;
+        float endY = cy - r * cosA;
+
+        // Tangent vector along circular arc & inward normal
+        float tx = cosA;
+        float ty = sinA;
+        float nx = -sinA;
+        float ny = cosA;
+
+        float arrowLen = r * 0.70f;
+        float arrowWidth = r * 0.55f;
+
+        juce::Path head;
+        head.startNewSubPath(endX + tx * arrowLen, endY + ty * arrowLen);
+        head.lineTo(endX - tx * (arrowLen * 0.25f) + nx * arrowWidth, endY - ty * (arrowLen * 0.25f) + ny * arrowWidth);
+        head.lineTo(endX - tx * (arrowLen * 0.25f) - nx * arrowWidth, endY - ty * (arrowLen * 0.25f) - ny * arrowWidth);
+        head.closeSubPath();
+
+        g.fillPath(head);
+    }
+};
+
+//==============================================================================
 class WaveSlaveAudioProcessorEditor : public juce::AudioProcessorEditor,
                                       public juce::ValueTree::Listener,
                                       public juce::AudioProcessorValueTreeState::Listener
@@ -1349,7 +1411,7 @@ private:
 
     // Factory Presets
     juce::ComboBox factoryPresetBox;
-    juce::TextButton regenerateButton;
+    ReloadButton regenerateButton;
     juce::ComboBox partialsComboBox;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> partialsAttachment;
 
