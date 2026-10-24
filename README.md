@@ -31,8 +31,15 @@ WaveSlave is a 16-partial additive synthesizer audio plugin and standalone appli
 
 ## Screenshots
 
-![WaveSlave Harmonics Interface](assets/screenshot_harmonics.png)
-![WaveSlave Polar Overview](assets/screenshot_polar.png)
+### Interactive Sliding Spectrograph & Dual-Mode Oscilloscope
+*Real-time interactive harmonic node editing with live FFT spectral analysis, dual-mode oscilloscope with partial waveform overlays, and voice configuration controls.*
+
+![WaveSlave Sliding Spectrum & Oscilloscope](assets/screenshot_spectrum_scope.png)
+
+### Full-Spectrum Waterfall Spectrogram & Resonant Filter Staging
+*Logarithmic waterfall spectrogram (20 Hz to 20 kHz) tracking harmonic time-frequency decay, alongside dual resonant Low-Pass and High-Pass filter controls.*
+
+![WaveSlave Full Spectrum Waterfall](assets/screenshot_waterfall.png)
 
 ## Installation
 
