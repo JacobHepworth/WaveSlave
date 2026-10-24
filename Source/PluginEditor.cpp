@@ -33,12 +33,11 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
     factoryPresetBox.addItem("Sharkfin Brass", 10);
     factoryPresetBox.addItem("Chiptune", 11);
     factoryPresetBox.addItem("Wobbling Square", 12);
-    factoryPresetBox.addItem("Too Much Glue!", 13);
-    factoryPresetBox.addItem("Alien Drone", 14);
-    factoryPresetBox.addItem("Soft Pad", 15);
-    factoryPresetBox.addItem("Seraphim", 16);
-    factoryPresetBox.addItem("808 Drum Bass", 17);
-    factoryPresetBox.addItem("Random", 18);
+    factoryPresetBox.addItem("Alien Drone", 13);
+    factoryPresetBox.addItem("Soft Pad", 14);
+    factoryPresetBox.addItem("Seraphim", 15);
+    factoryPresetBox.addItem("808 Drum Bass", 16);
+    factoryPresetBox.addItem("Random", 17);
     factoryPresetBox.setSelectedId(0, juce::dontSendNotification);
     factoryPresetBox.onChange = [this] 
     { 
@@ -65,7 +64,7 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
             {
                 if (safeThis != nullptr && result == 1)
                 {
-                    safeThis->applyFactoryPreset(18);
+                    safeThis->applyFactoryPreset(17);
                 }
             })
         );
@@ -1878,108 +1877,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
     }
 
     // ------------------------------------------------------------------------
-    else if (index == 13) // Too Much Glue! - thick, morphing asynchronous multi-partial cluster
-    {
-        setParam(ap, "NUM_PARTIALS", 8.0f);
-        setParam(ap, "VOICE_MODE",   0.0f); // Poly
-        setParam(ap, "VELOCITY_ENABLED", 1.0f);
-
-        // Pure harmonic overtone series (consonant natural harmonics of a rich major triad)
-        float ratios[8]   = { 1.0f,  2.0f,   3.0f,   4.0f,    5.0f,   6.0f,   8.0f,  10.0f };
-        float gains[8]    = { 1.0f,  0.72f,  0.58f,  0.48f,   0.38f,  0.28f,  0.20f,  0.14f };
-        float detunes[8]  = { 0.0f,  2.0f,  -2.0f,   2.5f,   -2.5f,   1.5f,  -1.5f,   0.0f };
-        float pans[8]     = { 0.0f, -0.45f,  0.45f, -0.30f,   0.30f, -0.70f,  0.70f,  0.0f };
-        // Tri, Sharkfin, Saw, Tri, Pulse, Sharkfin, Sine, Saw
-        float waves[8]    = { 1.0f,  5.0f,   2.0f,   1.0f,    4.0f,   5.0f,   0.0f,   2.0f };
-
-        // Overlapping asynchronous ADSRs - partials swell and bloom organically
-        float atks[8] = { 0.04f, 0.35f, 0.80f, 0.08f, 1.20f, 0.25f, 0.60f, 0.90f };
-        float decs[8] = { 0.80f, 1.30f, 1.60f, 0.60f, 1.20f, 1.50f, 1.00f, 1.30f };
-        float suss[8] = { 0.90f, 0.70f, 0.75f, 0.50f, 0.65f, 0.60f, 0.50f, 0.40f };
-        float rels[8] = { 1.40f, 1.80f, 2.00f, 1.00f, 2.20f, 1.60f, 1.90f, 2.40f };
-
-        // LFO Modulation:
-        // Targets: 0=None, 1=Pitch, 2=Level, 3=Pan
-        // Mod targets focus on spatial panning and level breathing; pitch modulation is gentle tape chorusing
-        float modTargets[8] = { 0.0f,   2.0f,   3.0f,   1.0f,   2.0f,   3.0f,   1.0f,   3.0f };
-        float modRates[8]   = { 0.0f,   0.75f,  0.38f,  0.45f,  1.10f,  0.48f,  0.35f,  0.25f };
-        float modDepths[8]  = { 0.0f,   0.45f,  0.70f,  0.018f, 0.50f,  0.75f,  0.015f, 0.65f };
-        float modWaves[8]   = { 0.0f,   1.0f,   2.0f,   0.0f,   1.0f,   0.0f,   1.0f,   2.0f }; // Sine, Tri, Saw...
-
-        // Keyframe Animation: dynamic evolving paths across all 8 partials
-        float animModes[8]  = { 3.0f,  4.0f,  3.0f,  4.0f,  3.0f,  4.0f,  3.0f,  4.0f }; // Loop & Ping-Pong
-        float animCurves[8] = { 0.0f,  0.0f,  1.0f,  0.0f,  0.0f,  1.0f,  0.0f,  0.0f }; // Smooth & Linear
-        float animDurs[8]   = { 2.6f,  1.9f,  3.4f,  2.2f,  3.8f,  2.8f,  4.2f,  3.1f };
-
-        audioProcessor.clearAllKeyframes();
-
-        for (int i = 1; i <= 8; ++i) {
-            setParam(ap, "WAVEFORM"      + juce::String(i), waves[i-1]);
-            setParam(ap, "RATIO"         + juce::String(i), ratios[i-1]);
-            setParam(ap, "GAIN"          + juce::String(i), gains[i-1]);
-            setParam(ap, "DETUNE"        + juce::String(i), detunes[i-1]);
-            setParam(ap, "PAN"           + juce::String(i), pans[i-1]);
-            setParam(ap, "P_ADSR_ENABLED"+ juce::String(i), 1.0f);
-            setParam(ap, "P_ATTACK"      + juce::String(i), atks[i-1]);
-            setParam(ap, "P_DECAY"       + juce::String(i), decs[i-1]);
-            setParam(ap, "P_SUSTAIN"     + juce::String(i), suss[i-1]);
-            setParam(ap, "P_RELEASE"     + juce::String(i), rels[i-1]);
-            setParam(ap, "P_GLIDE"       + juce::String(i), 0.0f);
-
-            setParam(ap, "MOD_TARGET"    + juce::String(i), modTargets[i-1]);
-            setParam(ap, "MOD_RATE"      + juce::String(i), modRates[i-1]);
-            setParam(ap, "MOD_DEPTH"     + juce::String(i), modDepths[i-1]);
-            setParam(ap, "MOD_WAVEFORM"  + juce::String(i), modWaves[i-1]);
-            setParam(ap, "MOD_PHASE"     + juce::String(i), (float)((i * 47) % 360));
-
-            setParam(ap, "ANIM_MODE"     + juce::String(i), animModes[i-1]);
-            setParam(ap, "ANIM_CURVE"    + juce::String(i), animCurves[i-1]);
-            setParam(ap, "ANIM_DURATION" + juce::String(i), animDurs[i-1]);
-            setParam(ap, "ANIM_DEPTH"    + juce::String(i), 0.70f);
-
-            PartialAnimationData track;
-            float r0 = ratios[i-1];
-            float g0 = gains[i-1];
-            float d0 = detunes[i-1];
-            float p0 = pans[i-1];
-
-            if (i == 1)
-            {
-                // Fundamental partial anchors the root: evolves gain and pan, perfectly harmonic
-                track.keyframes[0] = { 0.0f,  r0, g0,         0.0f, 0.0f,  p0 };
-                track.keyframes[1] = { 0.35f, r0, g0 * 0.75f, 0.0f, 0.0f, -0.20f };
-                track.keyframes[2] = { 0.70f, r0, g0 * 1.15f, 0.0f, 0.0f,  0.20f };
-                track.keyframes[3] = { 1.0f,  r0, g0,         0.0f, 0.0f,  p0 };
-            }
-            else
-            {
-                // Upper partials: dynamic gain breathing, wide stereo sweeping, subtle analog detune shimmer, zero semitone drift
-                track.keyframes[0] = { 0.0f,  r0, g0,                                     0.0f, d0,                p0 };
-                track.keyframes[1] = { 0.35f, r0, juce::jlimit(0.05f, 1.0f, g0 * 0.65f),  0.0f, -d0 * 0.6f + 2.0f, -p0 * 0.8f };
-                track.keyframes[2] = { 0.70f, r0, juce::jlimit(0.05f, 1.0f, g0 * 1.20f),  0.0f, d0 * 0.5f - 2.0f,   p0 * 1.1f };
-                track.keyframes[3] = { 1.0f,  r0, g0,                                     0.0f, d0,                p0 };
-            }
-            track.numKeyframes = 4;
-            audioProcessor.setPartialAnimation(i - 1, track);
-        }
-        for (int i = 9; i <= 16; ++i)
-            setParam(ap, "GAIN" + juce::String(i), 0.0f);
-
-        setParam(ap, "ATTACK",      0.05f);
-        setParam(ap, "DECAY",       1.50f);
-        setParam(ap, "SUSTAIN",     0.85f);
-        setParam(ap, "RELEASE",     2.20f);
-        setParam(ap, "MASTER_GAIN", 0.50f);
-        setParam(ap, "HPF_ENABLED", 1.0f);
-        setParam(ap, "HPF_CUTOFF",  30.0f);
-        setParam(ap, "HPF_RESO",    0.707f);
-        setParam(ap, "LPF_ENABLED", 1.0f);
-        setParam(ap, "LPF_CUTOFF",  4200.0f);
-        setParam(ap, "LPF_RESO",    1.80f);
-    }
-
-    // ------------------------------------------------------------------------
-    else if (index == 14) // Alien Drone - restored to 4 partials (classic inharmonic saw drone)
+    else if (index == 13) // Alien Drone - restored to 4 partials (classic inharmonic saw drone)
     {
         // Reverted to exactly 4 partials as preferred by user
         setParam(ap, "NUM_PARTIALS", 4.0f);
@@ -2031,7 +1929,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
     }
 
     // ------------------------------------------------------------------------
-    else if (index == 15) // Soft Pad - warm analog poly-pad standard
+    else if (index == 14) // Soft Pad - warm analog poly-pad standard
     {
         setParam(ap, "NUM_PARTIALS", 6.0f);
         setParam(ap, "VOICE_MODE",   0.0f); // Poly
@@ -2078,7 +1976,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
     }
 
     // ------------------------------------------------------------------------
-    else if (index == 16) // Seraphim - Angelic celestial choir pad, warm sub foundation
+    else if (index == 15) // Seraphim - Angelic celestial choir pad, warm sub foundation
     {
         setParam(ap, "NUM_PARTIALS", 5.0f);
         setParam(ap, "VOICE_MODE",   0.0f); // Poly
@@ -2192,7 +2090,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
     }
 
     // ------------------------------------------------------------------------
-    else if (index == 17) // 808 Drum Bass - Classic punchy analog sub kick & booming gliding bass
+    else if (index == 16) // 808 Drum Bass - Classic punchy analog sub kick & booming gliding bass
     {
         setParam(ap, "NUM_PARTIALS", 3.0f);
         setParam(ap, "VOICE_MODE",   1.0f); // Mono (classic 808 mono bass)
@@ -2273,7 +2171,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
     }
 
     // ------------------------------------------------------------------------
-    else if (index == 18) // Random - procedurally generated patch
+    else if (index == 17) // Random - procedurally generated patch
     {
         audioProcessor.clearAllKeyframes();
 
@@ -2461,7 +2359,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
         regenerateButton.setVisible(false);
         resized();
     }
-    else if (index == 18) // Random
+    else if (index == 17) // Random
     {
         factoryPresetBox.setTextWhenNothingSelected("Random");
         factoryPresetBox.setSelectedId(0, juce::dontSendNotification);
