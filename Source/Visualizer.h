@@ -349,7 +349,6 @@ private:
     juce::Point<float> dragStartMouse;
     float initialRatioNorm = 0.0f;
     float initialGainNorm = 0.0f;
-    float initialDetune = 0.0f;
     float initialSemitone = 0.0f;
     PartialKeyframe initialDragKeyframe;
     bool isFullCanvas = false;
@@ -364,8 +363,12 @@ private:
     int draggedKeyframeIndex = -1;
     int draggedWaypointKeyframe = -1;
     bool isScrubbingTimeline = false;
-    bool isPreviewPlaying = false;
     bool isSyncingTimelineControls = false;
+
+    juce::ComboBox   timelinePartialBox;
+    juce::TextButton timelinePrevBtn { "<" };
+    juce::TextButton timelineNextBtn { ">" };
+    void updateTimelinePartialBoxItems();
 
     juce::TextButton animEnableBtn { "OFF" };
     juce::TextButton addKfBtn      { "+KF" };

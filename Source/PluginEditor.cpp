@@ -1,4 +1,4 @@
-﻿#include "PluginProcessor.h"
+#include "PluginProcessor.h"
 #include "PluginEditor.h"
 
 WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProcessor& p)
@@ -19,6 +19,7 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
 
     // Presets
     addAndMakeVisible(factoryPresetBox);
+    factoryPresetBox.setScrollWheelEnabled(false);
     factoryPresetBox.setTextWhenNothingSelected("Presets");
     factoryPresetBox.addItem("Reset", 1);
     factoryPresetBox.addItem("Fat Saw Bass", 2);
@@ -46,6 +47,7 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
     };
     
     addAndMakeVisible(fileMenuBox);
+    fileMenuBox.setScrollWheelEnabled(false);
     fileMenuBox.setTextWhenNothingSelected("File");
     fileMenuBox.addItem("Save Preset...", 1);
     fileMenuBox.addItem("Load Preset...", 2);
@@ -220,6 +222,7 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
 
 
     addAndMakeVisible(partialsComboBox);
+    partialsComboBox.setScrollWheelEnabled(false);
     partialsComboBox.addItem("None", 1);
     for (int i = 1; i <= 15; ++i)
     {
@@ -228,6 +231,7 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
 
     // Combined Edit & Bulk Transformations dropdown
     addAndMakeVisible(editMenuBox);
+    editMenuBox.setScrollWheelEnabled(false);
     editMenuBox.setTextWhenNothingSelected("Edit");
 
     editMenuBox.addItem("Reset All Partials",       99);
@@ -273,17 +277,13 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
     editMenuBox.addItem("Voice: All Legato",         62);
     editMenuBox.addSeparator();
 
-    editMenuBox.addItem("Detune: None",              30);
-    editMenuBox.addItem("Detune: Subtle Spread",     31);
-    editMenuBox.addItem("Detune: Wide Spread",       32);
-    editMenuBox.addSeparator();
-
     editMenuBox.addItem("Semitone: Reset All",       40);
     editMenuBox.addSeparator();
 
     editMenuBox.addItem("LFO Target: None",          50);
     editMenuBox.addItem("LFO Target: Pitch",         51);
     editMenuBox.addItem("LFO Target: Level",         52);
+    editMenuBox.addItem("LFO Target: Pan",           54);
     editMenuBox.addItem("LFO Depth: 50%",            53);
     editMenuBox.addSeparator();
 
@@ -326,9 +326,6 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
         else if (result == 22) applyBulkGainTilt(2);
         else if (result == 23) applyBulkGainTilt(3);
         else if (result == 24) applyBulkGainTilt(4);
-        else if (result == 30) applyBulkDetune(0);
-        else if (result == 31) applyBulkDetune(1);
-        else if (result == 32) applyBulkDetune(2);
         else if (result == 35) applyBulkPan(0);
         else if (result == 36) applyBulkPan(1);
         else if (result == 37) applyBulkPan(2);
@@ -339,6 +336,7 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
         else if (result == 50) applyBulkModTarget(0);
         else if (result == 51) applyBulkModTarget(1);
         else if (result == 52) applyBulkModTarget(2);
+        else if (result == 54) applyBulkModTarget(3);
         else if (result == 53) applyBulkModDepth(0.5f);
         else if (result == 110) applyBulkModWaveform(0);
         else if (result == 111) applyBulkModWaveform(1);
@@ -444,6 +442,7 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
     voiceSectionLabel.setColour(juce::Label::textColourId, juce::Colour(0xFFFFFFFF));
 
     addChildComponent(masterVoiceBox);
+    masterVoiceBox.setScrollWheelEnabled(false);
     masterVoiceBox.addItemList({ "Poly", "Mono", "Legato" }, 1);
     masterVoiceAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.apvts, "VOICE_MODE", masterVoiceBox);
@@ -495,6 +494,7 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
 
     partialsContainer.initPartials(audioProcessor.apvts, 16, [this](int idx)
     {
+        partialsContainer.setSelectedPartial(idx);
         spectrograph.setSelectedPartial(idx);
     });
 
@@ -835,23 +835,6 @@ void WaveSlaveAudioProcessorEditor::applyBulkGainTilt(int tiltType)
     }
 }
 
-void WaveSlaveAudioProcessorEditor::applyBulkDetune(int detuneType)
-{
-    for (int i = 1; i <= 16; ++i)
-    {
-        if (auto* p = audioProcessor.apvts.getParameter("DETUNE" + juce::String(i)))
-        {
-            float d = 0.0f;
-            if (detuneType == 1) d = (i % 2 == 0 ? 1.0f : -1.0f) * (i * 0.5f); // Subtle spread
-            else if (detuneType == 2) d = (i % 2 == 0 ? 1.0f : -1.0f) * (i * 2.0f); // Wide spread
-
-            p->beginChangeGesture();
-            p->setValueNotifyingHost(p->convertTo0to1(juce::jlimit(-50.0f, 50.0f, d)));
-            p->endChangeGesture();
-        }
-    }
-}
-
 void WaveSlaveAudioProcessorEditor::applyBulkSemitones(int semitones)
 {
     for (int i = 1; i <= 16; ++i)
@@ -1107,11 +1090,10 @@ void WaveSlaveAudioProcessorEditor::randomizePartials()
             p->setValueNotifyingHost(p->convertTo0to1((float)wave));
             p->endChangeGesture();
         }
-        float detune = ((float)std::rand() / RAND_MAX * 20.0f) - 10.0f;
         if (auto* p = audioProcessor.apvts.getParameter("DETUNE" + s))
         {
             p->beginChangeGesture();
-            p->setValueNotifyingHost(p->convertTo0to1(detune));
+            p->setValueNotifyingHost(p->convertTo0to1(0.0f));
             p->endChangeGesture();
         }
         if (i > 1)
@@ -1241,7 +1223,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             setParam(ap, "WAVEFORM"    + juce::String(i), 2.0f); // Saw
             setParam(ap, "RATIO"       + juce::String(i), ratios[i-1]);
             setParam(ap, "GAIN"        + juce::String(i), gains[i-1]);
-            setParam(ap, "DETUNE"      + juce::String(i), detunes[i-1]);
+            setParam(ap, "DETUNE"      + juce::String(i), 0.0f);
             setParam(ap, "PAN"         + juce::String(i), pans[i-1]);
             setParam(ap, "P_GLIDE"     + juce::String(i), 0.05f);
             setParam(ap, "P_ATTACK"    + juce::String(i), 0.004f);
@@ -1287,7 +1269,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             setParam(ap, "WAVEFORM"    + juce::String(i), waves[i-1]);
             setParam(ap, "RATIO"       + juce::String(i), ratios[i-1]);
             setParam(ap, "GAIN"        + juce::String(i), gains[i-1]);
-            setParam(ap, "DETUNE"      + juce::String(i), detunes[i-1]);
+            setParam(ap, "DETUNE"      + juce::String(i), 0.0f);
             setParam(ap, "PAN"         + juce::String(i), pans[i-1]);
             setParam(ap, "P_ATTACK"    + juce::String(i), 1.2f);
             setParam(ap, "P_DECAY"     + juce::String(i), 2.5f);
@@ -1378,7 +1360,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             setParam(ap, "WAVEFORM"    + juce::String(i), waves[i-1]);
             setParam(ap, "RATIO"       + juce::String(i), ratios[i-1]);
             setParam(ap, "GAIN"        + juce::String(i), gains[i-1]);
-            setParam(ap, "DETUNE"      + juce::String(i), detunes[i-1]);
+            setParam(ap, "DETUNE"      + juce::String(i), 0.0f);
             setParam(ap, "PAN"         + juce::String(i), pans[i-1]);
             setParam(ap, "P_ATTACK"    + juce::String(i), 0.035f);
             setParam(ap, "P_DECAY"     + juce::String(i), 0.60f);
@@ -1478,7 +1460,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             setParam(ap, "WAVEFORM"    + juce::String(i), 0.0f); // Pure Sine
             setParam(ap, "RATIO"       + juce::String(i), ratios[i-1]);
             setParam(ap, "GAIN"        + juce::String(i), gains[i-1]);
-            setParam(ap, "DETUNE"      + juce::String(i), detunes[i-1]);
+            setParam(ap, "DETUNE"      + juce::String(i), 0.0f);
             setParam(ap, "PAN"         + juce::String(i), pans[i-1]);
             setParam(ap, "P_ADSR_ENABLED" + juce::String(i), (i >= 5 ? 1.0f : 0.0f)); // Tine harmonics decay independently
             setParam(ap, "P_ATTACK"    + juce::String(i), 0.001f);
@@ -1526,7 +1508,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             setParam(ap, "WAVEFORM"    + juce::String(i), 2.0f); // Saw
             setParam(ap, "RATIO"       + juce::String(i), ratios[i-1]);
             setParam(ap, "GAIN"        + juce::String(i), gains[i-1]);
-            setParam(ap, "DETUNE"      + juce::String(i), detunes[i-1]);
+            setParam(ap, "DETUNE"      + juce::String(i), 0.0f);
             setParam(ap, "PAN"         + juce::String(i), pans[i-1]);
             setParam(ap, "P_ATTACK"    + juce::String(i), 0.75f);
             setParam(ap, "P_DECAY"     + juce::String(i), 2.5f);
@@ -1578,7 +1560,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             setParam(ap, "WAVEFORM"    + juce::String(i), 6.0f); // Fibonacci
             setParam(ap, "RATIO"       + juce::String(i), fib[i-1]);
             setParam(ap, "GAIN"        + juce::String(i), gains[i-1]);
-            setParam(ap, "DETUNE"      + juce::String(i), detunes[i-1]);
+            setParam(ap, "DETUNE"      + juce::String(i), 0.0f);
             setParam(ap, "PAN"         + juce::String(i), pans[i-1]);
             setParam(ap, "P_ADSR_ENABLED" + juce::String(i), (i >= 2 ? 1.0f : 0.0f)); // Damping on upper harmonics
             setParam(ap, "P_ATTACK"    + juce::String(i), 0.001f);
@@ -1623,7 +1605,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             setParam(ap, "WAVEFORM"    + juce::String(i), 5.0f); // Sharkfin
             setParam(ap, "RATIO"       + juce::String(i), ratios[i-1]);
             setParam(ap, "GAIN"        + juce::String(i), gains[i-1]);
-            setParam(ap, "DETUNE"      + juce::String(i), detunes[i-1]);
+            setParam(ap, "DETUNE"      + juce::String(i), 0.0f);
             setParam(ap, "PAN"         + juce::String(i), pans[i-1]);
             setParam(ap, "P_ATTACK"    + juce::String(i), 0.09f); // Horn swell
             setParam(ap, "P_DECAY"     + juce::String(i), 0.60f);
@@ -1670,7 +1652,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             setParam(ap, "RATIO"       + juce::String(i), ratios[i-1]);
             setParam(ap, "SEMITONE"    + juce::String(i), 0.0f);
             setParam(ap, "GAIN"        + juce::String(i), gains[i-1]);
-            setParam(ap, "DETUNE"      + juce::String(i), detunes[i-1]);
+            setParam(ap, "DETUNE"      + juce::String(i), 0.0f);
             setParam(ap, "PAN"         + juce::String(i), pans[i-1]);
             setParam(ap, "P_ATTACK"    + juce::String(i), 0.001f);
             setParam(ap, "P_DECAY"     + juce::String(i), 0.12f);
@@ -1719,7 +1701,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             setParam(ap, "WAVEFORM"    + juce::String(i), 3.0f); // Square
             setParam(ap, "RATIO"       + juce::String(i), ratios[i-1]);
             setParam(ap, "GAIN"        + juce::String(i), gains[i-1]);
-            setParam(ap, "DETUNE"      + juce::String(i), detunes[i-1]);
+            setParam(ap, "DETUNE"      + juce::String(i), 0.0f);
             setParam(ap, "PAN"         + juce::String(i), 0.0f);
             setParam(ap, "P_GLIDE"     + juce::String(i), 0.04f);
             setParam(ap, "P_ATTACK"    + juce::String(i), 0.05f);
@@ -1759,7 +1741,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
         // Irrational/inharmonic ratios that clash and morph together
         float ratios[8]   = { 1.0f,  1.414f, 2.18f,  3.1416f, 4.67f,  6.283f, 8.53f,  11.37f };
         float gains[8]    = { 1.0f,  0.75f,  0.65f,  0.55f,   0.45f,  0.38f,  0.30f,  0.22f };
-        float detunes[8]  = { 0.0f, -14.0f,  18.0f, -8.0f,    25.0f, -20.0f,  11.0f, -28.0f };
+        float detunes[8]  = { 0.0f,  0.0f,   0.0f,   0.0f,    0.0f,   0.0f,   0.0f,   0.0f };
         float pans[8]     = { 0.0f, -0.65f,  0.65f, -0.40f,   0.40f, -0.85f,  0.85f,  0.0f };
         // Tri, Sharkfin, Fibonacci, Saw, Pulse, Tri, Sharkfin, Fibonacci
         float waves[8]    = { 1.0f,  5.0f,   6.0f,   2.0f,    4.0f,   1.0f,   5.0f,   6.0f };
@@ -1770,8 +1752,8 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
         float suss[8] = { 0.90f, 0.55f, 0.75f, 0.25f, 0.70f, 0.50f, 0.40f, 0.30f };
         float rels[8] = { 1.20f, 1.80f, 2.20f, 0.60f, 2.50f, 1.50f, 2.00f, 2.80f };
 
-        // Mod 1 (LFO) - targets: 1=Pitch, 2=Level, 3=Pan, 4=Detune
-        float modTargets[8] = { 1.0f, 2.0f, 3.0f, 4.0f, 1.0f, 2.0f, 3.0f, 1.0f };
+        // Mod 1 (LFO) - targets: 1=Pitch, 2=Level, 3=Pan
+        float modTargets[8] = { 1.0f, 2.0f, 3.0f, 1.0f, 1.0f, 2.0f, 3.0f, 1.0f };
         float modRates[8]   = { 0.43f, 1.13f, 0.29f, 2.71f, 0.67f, 1.83f, 0.53f, 3.41f };
         float modDepths[8]  = { 0.07f, 0.45f, 0.75f, 0.55f, 0.05f, 0.50f, 0.85f, 0.10f };
         float modWaves[8]   = { 0.0f, 1.0f, 2.0f, 0.0f, 3.0f, 0.0f, 1.0f, 2.0f }; // Sine, Tri, Saw, Sine, Square...
@@ -1785,7 +1767,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             setParam(ap, "WAVEFORM"      + juce::String(i), waves[i-1]);
             setParam(ap, "RATIO"         + juce::String(i), ratios[i-1]);
             setParam(ap, "GAIN"          + juce::String(i), gains[i-1]);
-            setParam(ap, "DETUNE"        + juce::String(i), detunes[i-1]);
+            setParam(ap, "DETUNE"        + juce::String(i), 0.0f);
             setParam(ap, "PAN"           + juce::String(i), pans[i-1]);
             setParam(ap, "P_ADSR_ENABLED"+ juce::String(i), 1.0f);
             setParam(ap, "P_ATTACK"      + juce::String(i), atks[i-1]);
@@ -1808,12 +1790,11 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             PartialAnimationData track;
             float r0 = ratios[i-1];
             float g0 = gains[i-1];
-            float d0 = detunes[i-1];
             float p0 = pans[i-1];
-            track.keyframes[0] = { 0.0f,  r0,                                           g0,                                         0.0f,  d0,                                          p0 };
-            track.keyframes[1] = { 0.35f, juce::jlimit(0.1f, 32.0f, r0 * 1.18f),        juce::jlimit(0.05f, 1.0f, g0 * 0.65f),       2.0f,  juce::jlimit(-50.0f, 50.0f, -d0 * 0.8f),     -p0 };
-            track.keyframes[2] = { 0.70f, juce::jlimit(0.1f, 32.0f, r0 * 0.84f),        juce::jlimit(0.05f, 1.0f, g0 * 1.15f),      -3.0f,  juce::jlimit(-50.0f, 50.0f, d0 * 0.5f),       p0 * 0.5f };
-            track.keyframes[3] = { 1.0f,  r0,                                           g0,                                         0.0f,  d0,                                          p0 };
+            track.keyframes[0] = { 0.0f,  r0,                                           g0,                                         0.0f,  0.0f, p0 };
+            track.keyframes[1] = { 0.35f, juce::jlimit(0.1f, 32.0f, r0 * 1.18f),        juce::jlimit(0.05f, 1.0f, g0 * 0.65f),       2.0f,  0.0f, -p0 };
+            track.keyframes[2] = { 0.70f, juce::jlimit(0.1f, 32.0f, r0 * 0.84f),        juce::jlimit(0.05f, 1.0f, g0 * 1.15f),      -3.0f,  0.0f, p0 * 0.5f };
+            track.keyframes[3] = { 1.0f,  r0,                                           g0,                                         0.0f,  0.0f, p0 };
             track.numKeyframes = 4;
             audioProcessor.setPartialAnimation(i - 1, track);
         }
@@ -1851,7 +1832,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             setParam(ap, "WAVEFORM"    + juce::String(i), 2.0f); // Raw Sawtooth
             setParam(ap, "RATIO"       + juce::String(i), ratios[i-1]);
             setParam(ap, "GAIN"        + juce::String(i), gains[i-1]);
-            setParam(ap, "DETUNE"      + juce::String(i), detunes[i-1]);
+            setParam(ap, "DETUNE"      + juce::String(i), 0.0f);
             setParam(ap, "PAN"         + juce::String(i), pans[i-1]);
             setParam(ap, "P_ATTACK"    + juce::String(i), 2.0f);
             setParam(ap, "P_DECAY"     + juce::String(i), 1.0f);
@@ -1902,7 +1883,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             setParam(ap, "WAVEFORM"    + juce::String(i), waves[i-1]);
             setParam(ap, "RATIO"       + juce::String(i), ratios[i-1]);
             setParam(ap, "GAIN"        + juce::String(i), gains[i-1]);
-            setParam(ap, "DETUNE"      + juce::String(i), detunes[i-1]);
+            setParam(ap, "DETUNE"      + juce::String(i), 0.0f);
             setParam(ap, "PAN"         + juce::String(i), pans[i-1]);
             setParam(ap, "P_ATTACK"    + juce::String(i), 0.65f);
             setParam(ap, "P_DECAY"     + juce::String(i), 1.8f);
@@ -1962,7 +1943,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
         setParam(ap, "RATIO2",        1.0f); // 1.0x fundamental
         setParam(ap, "SEMITONE2",     0.0f);
         setParam(ap, "GAIN2",         0.80f);
-        setParam(ap, "DETUNE2",       3.5f);
+        setParam(ap, "DETUNE2",       0.0f);
         setParam(ap, "PAN2",         -0.30f);
         setParam(ap, "MOD_TARGET2",   1.0f); // Angelic choir vibrato
         setParam(ap, "MOD_RATE2",     4.2f); // Subtle 4.2 Hz vibrato
@@ -1980,7 +1961,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
         setParam(ap, "RATIO3",        1.5f); // Perfect fifth above fundamental
         setParam(ap, "SEMITONE3",     0.0f);
         setParam(ap, "GAIN3",         0.65f);
-        setParam(ap, "DETUNE3",      -3.0f);
+        setParam(ap, "DETUNE3",       0.0f);
         setParam(ap, "PAN3",          0.30f);
         setParam(ap, "MOD_TARGET3",   3.0f); // Pan modulation
         setParam(ap, "MOD_RATE3",     0.15f); // Very slow drift
@@ -1998,7 +1979,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
         setParam(ap, "RATIO4",        2.0f); // Super-octave
         setParam(ap, "SEMITONE4",     0.0f);
         setParam(ap, "GAIN4",         0.45f);
-        setParam(ap, "DETUNE4",       5.0f);
+        setParam(ap, "DETUNE4",       0.0f);
         setParam(ap, "PAN4",         -0.45f);
         setParam(ap, "MOD_TARGET4",   1.0f); // Shimmer pitch movement
         setParam(ap, "MOD_RATE4",     5.0f);
@@ -2016,7 +1997,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
         setParam(ap, "RATIO5",        3.0f); // High celestial harmonic
         setParam(ap, "SEMITONE5",     0.0f);
         setParam(ap, "GAIN5",         0.30f);
-        setParam(ap, "DETUNE5",      -4.0f);
+        setParam(ap, "DETUNE5",       0.0f);
         setParam(ap, "PAN5",          0.45f);
         setParam(ap, "MOD_TARGET5",   2.0f); // Subtle shimmer breathing
         setParam(ap, "MOD_RATE5",     0.35f);
@@ -2218,13 +2199,12 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             float ratio = (archetype == 3) ? (1.0f + 0.5f * (i - 1)) : (float)i;
             int wave = (archetype == 1) ? (std::rand() % 2) : (std::rand() % 5);
             float baseGain = (i == 1) ? 1.0f : (1.0f / (float)i);
-            float detune = ((float)std::rand() / RAND_MAX * 8.0f) - 4.0f;
             float pan = (i % 2 == 0 ? 0.35f : -0.35f) * ((float)i / (float)count);
 
             setParam(ap, "WAVEFORM"    + juce::String(i), (float)wave);
             setParam(ap, "RATIO"       + juce::String(i), ratio);
             setParam(ap, "GAIN"        + juce::String(i), baseGain);
-            setParam(ap, "DETUNE"      + juce::String(i), detune);
+            setParam(ap, "DETUNE"      + juce::String(i), 0.0f);
             setParam(ap, "PAN"         + juce::String(i), pan);
             setParam(ap, "P_ATTACK"    + juce::String(i), masterAtk);
             setParam(ap, "P_DECAY"     + juce::String(i), masterDec);

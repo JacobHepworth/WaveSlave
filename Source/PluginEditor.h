@@ -42,6 +42,7 @@ public:
         label.setText(labelText, juce::dontSendNotification);
         label.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.7f));
         label.setFont(juce::Font(11.0f));
+        label.setInterceptsMouseClicks(false, false);
         addAndMakeVisible(label);
         addAndMakeVisible(slider);
         slider.setScrollWheelEnabled(false);
@@ -115,6 +116,7 @@ public:
             headerLabel.setColour(juce::Label::textColourId, getPartialColour(index));
         }
         headerLabel.setJustificationType(juce::Justification::centredLeft);
+        headerLabel.setInterceptsMouseClicks(false, false);
         addAndMakeVisible(headerLabel);
 
         minButton.setButtonText("-");
@@ -149,6 +151,7 @@ public:
         enableButton.setButtonText(enableButton.getToggleState() ? "ON" : "OFF");
 
         addAndMakeVisible(waveformBox);
+        waveformBox.setScrollWheelEnabled(false);
         waveformBox.addItemList({ "Sine", "Triangle", "Saw", "Square", "Pulse", "Sharkfin", "Fibonacci", "Noise", "Custom 1", "Custom 2", "Custom 3", "Custom 4" }, 1);
         waveformAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(apvts, "WAVEFORM" + idSuffix, waveformBox);
 
@@ -193,6 +196,7 @@ public:
         envLabel.setJustificationType(juce::Justification::centredLeft);
         envLabel.setFont(juce::Font(10.0f, juce::Font::bold));
         envLabel.setColour(juce::Label::textColourId, juce::Colour(0xFFFFFFFF));
+        envLabel.setInterceptsMouseClicks(false, false);
         addAndMakeVisible(envLabel);
 
         pAdsrEnableBtn.setClickingTogglesState(true);
@@ -237,6 +241,7 @@ public:
         modLabel.setJustificationType(juce::Justification::centredLeft);
         modLabel.setFont(juce::Font(10.0f, juce::Font::bold));
         modLabel.setColour(juce::Label::textColourId, juce::Colour(0xFF888888));
+        modLabel.setInterceptsMouseClicks(false, false);
         addAndMakeVisible(modLabel);
 
         pLfoEnableBtn.setClickingTogglesState(true);
@@ -265,7 +270,8 @@ public:
         };
 
         addAndMakeVisible(modTargetBox);
-        modTargetBox.addItemList({ "None", "Pitch", "Level", "Pan", "Detune" }, 1);
+        modTargetBox.setScrollWheelEnabled(false);
+        modTargetBox.addItemList({ "None", "Pitch", "Level", "Pan" }, 1);
         modTargetAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(apvts, "MOD_TARGET" + idSuffix, modTargetBox);
         modTargetBox.onChange = [this]()
         {
@@ -281,6 +287,7 @@ public:
         pLfoEnableBtn.setButtonText(pLfoEnableBtn.getToggleState() ? "ON" : "OFF");
 
         addAndMakeVisible(modWaveBox);
+        modWaveBox.setScrollWheelEnabled(false);
         modWaveBox.addItemList({ "Sine", "Triangle", "Saw", "Square", "Custom 1", "Custom 2", "Custom 3", "Custom 4" }, 1);
         modWaveAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(apvts, "MOD_WAVEFORM" + idSuffix, modWaveBox);
 
@@ -301,6 +308,7 @@ public:
         dynModLabel.setJustificationType(juce::Justification::centredLeft);
         dynModLabel.setFont(juce::Font(10.0f, juce::Font::bold));
         dynModLabel.setColour(juce::Label::textColourId, juce::Colour(0xFFFFFFFF));
+        dynModLabel.setInterceptsMouseClicks(false, false);
         addAndMakeVisible(dynModLabel);
 
         pDynModEnableBtn.setClickingTogglesState(true);
@@ -331,6 +339,7 @@ public:
         };
 
         addChildComponent(dynModModeBox);
+        dynModModeBox.setScrollWheelEnabled(false);
         dynModModeBox.addItemList({ "Off", "Note Length", "Time: One-Shot", "Time: Loop", "Time: Ping-Pong" }, 1);
         dynModModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(apvts, "ANIM_MODE" + idSuffix, dynModModeBox);
         dynModModeBox.onChange = [this]()
@@ -349,6 +358,7 @@ public:
         pDynModEnableBtn.setButtonText(pDynModEnableBtn.getToggleState() ? "ON" : "OFF");
 
         addChildComponent(dynModTargetBox);
+        dynModTargetBox.setScrollWheelEnabled(false);
         dynModTargetBox.addItemList({ "Smooth", "Linear", "Step" }, 1);
         dynModTargetAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(apvts, "ANIM_CURVE" + idSuffix, dynModTargetBox);
 
@@ -361,6 +371,7 @@ public:
         dynModDepthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(apvts, "ANIM_DEPTH" + idSuffix, dynModDepthSlider.slider);
 
         updateChildVisibility();
+        addMouseListener(this, true);
     }
 
     void setMinimized(bool min)
@@ -559,7 +570,7 @@ public:
         waveformBox.setBounds(area.removeFromTop(24));
         area.removeFromTop(6);
 
-        // Stacked horizontal sliders: Ratio, Level (below Ratio), Consolidated Tune (Semi & Fine), Pan
+        // Stacked horizontal sliders: Ratio, Level (below Ratio), Semitone, Pan
         int sliderH = 22;
         ratioSlider.setBounds(area.removeFromTop(sliderH));
         area.removeFromTop(4);
@@ -726,6 +737,7 @@ public:
 
     void initPartials(juce::AudioProcessorValueTreeState& apvts, int count, std::function<void(int)> onSelect)
     {
+        onSelectPartial = onSelect;
         for (int i = 0; i < count; ++i)
         {
             auto* strip = new PartialStrip(i, apvts);
@@ -749,8 +761,22 @@ public:
         activeCount = count;
     }
 
+    std::function<void(int)> onSelectPartial;
     std::function<void(int)> onParamEditedByUser;
     std::function<void(int)> onEnsureKeyframes;
+
+    void mouseDown(const juce::MouseEvent& e) override
+    {
+        for (int i = 0; i < activeCount && i < strips.size(); ++i)
+        {
+            if (strips[i]->isVisible() && strips[i]->getBounds().expanded(4, 4).contains(e.getPosition()))
+            {
+                setSelectedPartial(i);
+                if (onSelectPartial) onSelectPartial(i);
+                return;
+            }
+        }
+    }
 
     void setMinimizeAll(bool min)
     {
@@ -1249,7 +1275,6 @@ public:
     void applyBulkWaveform(int waveTypeIndex);
     void applyBulkHarmonicSeries(int seriesType);
     void applyBulkGainTilt(int tiltType);
-    void applyBulkDetune(int spreadType);
     void applyBulkSemitones(int semitoneValue);
     void applyBulkPan(int panType);
     void applyBulkVoiceMode(int mode);

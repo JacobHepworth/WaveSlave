@@ -1,51 +1,75 @@
-# CMake build directories
+# Build Artifacts & CMake Directories
 build/
-out/
+Build/
 bin/
+out/
+_deps/
 CMakeCache.txt
 CMakeFiles/
 CMakeScripts/
+CMakeUserPresets.json
 Testing/
 Makefile
 cmake_install.cmake
 install_manifest.txt
 compile_commands.json
 CTestTestfile.cmake
-_deps/
+cmake-build-*/
 
-# IDEs and Editors
+# Compiled Objects & Libraries
+*.o
+*.obj
+*.lib
+*.a
+*.exp
+*.ilk
+*.pdb
+*.idb
+*.ipch
+
+# Binaries & Plugin Bundles
+*.exe
+*.dll
+*.so
+*.dylib
+*.vst3
+*.component
+*.app
+Releases/
+
+# IDE & Editor Specific Files
 .vs/
-.idea/
-.vscode/
+*.VC.db
+*.VC.opendb
 *.user
 *.suo
 *.sln
 *.vcxproj
 *.vcxproj.filters
+*.vcxproj.user
+.vscode/
+.idea/
 *.xcodeproj/
 *.xcworkspace/
 
-# Compiled Binaries (User is distributing via GitHub Releases)
-*.exe
-*.dll
-*.vst3
-*.a
-*.so
-*.dylib
-*.lib
-*.exp
-
-# Scratch and temporary files
-scratch_resized.txt
+# Logs, Dumps & Temp Files
 *.log
 *.tmp
 *.bak
 *.swp
+*.orig
+scratch_resized.txt
 
-# macOS specific
+# Operating System Files
 .DS_Store
-
-# Windows specific
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+desktop.ini
+
+# JUCE & SDKs
 vst2sdk/
-Releases/
+vcpkg_installed/

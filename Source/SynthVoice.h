@@ -266,7 +266,7 @@ private:
     float currentPitchBendSemitones = 0.0f;
     float modWheelValue = 0.0f;
     
-    int partialModTargets[maxPartials]; // 0=None, 1=Pitch, 2=Level, 3=Pan, 4=Detune
+    int partialModTargets[maxPartials]; // 0=None, 1=Pitch, 2=Level, 3=Pan
     int partialModWaveforms[maxPartials]; // 0=Sine, 1=Tri, 2=Saw, 3=Square
     float partialModRates[maxPartials];
     float partialModDepths[maxPartials];

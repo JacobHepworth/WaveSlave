@@ -164,8 +164,7 @@ void WaveSlaveVoice::startNote (int midiNoteNumber, float velocity, juce::Synthe
             partialCurrentFreq[i] = targetFrequency;
 
         float semitoneShift = std::pow(2.0f, (partialSemitones[i] + currentPitchBendSemitones) / 12.0f);
-        float detuneShift = std::pow(2.0f, partialDetunes[i] / 1200.0f);
-        oscillators[i].setFrequency(partialCurrentFreq[i] * semitoneShift * detuneShift * partialRatios[i], currentSampleRate);
+        oscillators[i].setFrequency(partialCurrentFreq[i] * semitoneShift * partialRatios[i], currentSampleRate);
     }
 }
 
@@ -197,8 +196,7 @@ void WaveSlaveVoice::setTargetNote (int midiNoteNumber, float velocity, bool isL
             partialReleaseStartPhase[i] = 0.0f;
 
             float semitoneShift = std::pow(2.0f, (partialSemitones[i] + currentPitchBendSemitones) / 12.0f);
-            float detuneShift = std::pow(2.0f, partialDetunes[i] / 1200.0f);
-            oscillators[i].setFrequency(partialCurrentFreq[i] * semitoneShift * detuneShift * partialRatios[i], currentSampleRate);
+            oscillators[i].setFrequency(partialCurrentFreq[i] * semitoneShift * partialRatios[i], currentSampleRate);
         }
         return;
     }
@@ -234,8 +232,7 @@ void WaveSlaveVoice::setTargetNote (int midiNoteNumber, float velocity, bool isL
                 partialCurrentFreq[i] = targetFrequency;
 
             float semitoneShift = std::pow(2.0f, (partialSemitones[i] + currentPitchBendSemitones) / 12.0f);
-            float detuneShift = std::pow(2.0f, partialDetunes[i] / 1200.0f);
-            oscillators[i].setFrequency(partialCurrentFreq[i] * semitoneShift * detuneShift * partialRatios[i], currentSampleRate);
+            oscillators[i].setFrequency(partialCurrentFreq[i] * semitoneShift * partialRatios[i], currentSampleRate);
         }
     }
 }
@@ -345,7 +342,6 @@ void WaveSlaveVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer, in
             float animRatio  = partialRatios[i];
             float animGain   = partialGains[i];
             float animSemi   = partialSemitones[i];
-            float animDetune = partialDetunes[i];
             float animPan    = partialPans[i];
 
             int aMode = partialAnimModes[i];
@@ -405,7 +401,6 @@ void WaveSlaveVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer, in
                     animRatio  = juce::jlimit(0.01f, 32.0f,  startKf.ratio    + depth * (evalKf.ratio    - startKf.ratio));
                     animGain   = juce::jlimit(0.0f,  1.0f,   startKf.gain     + depth * (evalKf.gain     - startKf.gain));
                     animSemi   = juce::jlimit(-24.0f, 24.0f, startKf.semitone + depth * (evalKf.semitone - startKf.semitone));
-                    animDetune = juce::jlimit(-50.0f, 50.0f, startKf.detune   + depth * (evalKf.detune   - startKf.detune));
                     animPan    = juce::jlimit(-1.0f,  1.0f,   startKf.pan      + depth * (evalKf.pan      - startKf.pan));
                 }
             }
@@ -457,18 +452,16 @@ void WaveSlaveVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer, in
                 if (partialLfoPhases[i] >= 1.0f) partialLfoPhases[i] -= 1.0f;
             }
 
-            // 3. LFO Targets: 1=Pitch, 2=Level, 3=Pan, 4=Detune
+            // 3. LFO Targets: 1=Pitch, 2=Level, 3=Pan
             float pitchModShiftSemitones = 0.0f;
             float levelModMultiplier = 1.0f;
             float panModAmount = 0.0f;
-            float detuneModCents = 0.0f;
 
             // LFO (with Mod Wheel scaling if Mod Wheel is engaged)
             float effectiveLfoDepth = juce::jlimit(0.0f, 1.0f, partialModDepths[i] + modWheelValue * (1.0f - partialModDepths[i]));
             if (partialModTargets[i] == 1)      pitchModShiftSemitones += lfoVal * effectiveLfoDepth * 12.0f;
             else if (partialModTargets[i] == 2) levelModMultiplier *= (1.0f - effectiveLfoDepth * 0.5f * (1.0f - lfoVal));
             else if (partialModTargets[i] == 3) panModAmount += lfoVal * effectiveLfoDepth;
-            else if (partialModTargets[i] == 4) detuneModCents += lfoVal * effectiveLfoDepth * 50.0f;
 
             // Panning, ADSR & gain calculations
             float totalPan = juce::jlimit(-1.0f, 1.0f, masterPan + animPan + panModAmount);
@@ -478,19 +471,17 @@ void WaveSlaveVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer, in
             float currentGain = visGain * velFactor;
 
             float effSemitone = animSemi + pitchModShiftSemitones + currentPitchBendSemitones;
-            float baseDetuneCents = animDetune + detuneModCents;
             float semitoneShift = std::pow(2.0f, effSemitone / 12.0f);
-            float detuneShift = std::pow(2.0f, baseDetuneCents / 1200.0f);
-            float freq = partialCurrentFreq[i] * semitoneShift * detuneShift * animRatio;
+            float freq = partialCurrentFreq[i] * semitoneShift * animRatio;
 
             if (isLatestVoice && liveVisStates != nullptr && sample == numSamples - 1)
             {
                 float glideFactor = (targetFrequency > 0.0f) ? (partialCurrentFreq[i] / targetFrequency) : 1.0f;
-                float effRatio = animRatio * semitoneShift * detuneShift * glideFactor;
+                float effRatio = animRatio * semitoneShift * glideFactor;
                 (*liveVisStates)[i].effectiveRatio.store(juce::jlimit(0.01f, 32.0f, effRatio), std::memory_order_relaxed);
                 (*liveVisStates)[i].effectiveGain.store(visGain, std::memory_order_relaxed);
                 (*liveVisStates)[i].effectiveSemitone.store(juce::jlimit(-24.0f, 24.0f, effSemitone), std::memory_order_relaxed);
-                (*liveVisStates)[i].effectiveDetune.store(juce::jlimit(-50.0f, 50.0f, baseDetuneCents), std::memory_order_relaxed);
+                (*liveVisStates)[i].effectiveDetune.store(0.0f, std::memory_order_relaxed);
                 (*liveVisStates)[i].effectivePan.store(totalPan, std::memory_order_relaxed);
                 (*liveVisStates)[i].animPhase.store(partialAnimPhase[i], std::memory_order_relaxed);
                 (*liveVisStates)[i].envLevel.store(totalEnv, std::memory_order_relaxed);

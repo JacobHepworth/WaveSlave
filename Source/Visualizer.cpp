@@ -55,6 +55,7 @@ Oscilloscope::Oscilloscope(WaveSlaveAudioProcessor& p) : processor(p)
     slotSplinePoints[2] = { {0.0f, 0.0f}, {0.49f, 1.0f}, {0.51f, -1.0f}, {1.0f, 0.0f} };               // Saw
     slotSplinePoints[3] = { {0.0f, 1.0f}, {0.49f, 1.0f}, {0.51f, -1.0f}, {1.0f, -1.0f} };              // Square
 
+    slotSelector.setScrollWheelEnabled(false);
     slotSelector.addItem("Custom 1", 1);
     slotSelector.addItem("Custom 2", 2);
     slotSelector.addItem("Custom 3", 3);
@@ -757,6 +758,47 @@ Spectrograph::Spectrograph(WaveSlaveAudioProcessor& p)
     };
     addAndMakeVisible(clearKfBtn);
 
+    timelinePartialBox.setScrollWheelEnabled(false);
+    timelinePartialBox.setTooltip("Select Active Partial");
+    updateTimelinePartialBoxItems();
+    timelinePartialBox.onChange = [this]() {
+        if (isSyncingTimelineControls) return;
+        int p = timelinePartialBox.getSelectedId() - 1;
+        if (p >= 0 && p < 16)
+        {
+            setSelectedPartial(p);
+            if (onPartialSelected) onPartialSelected(p);
+        }
+    };
+    addAndMakeVisible(timelinePartialBox);
+
+    timelinePrevBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF222222));
+    timelinePrevBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    timelinePrevBtn.setTooltip("Previous Partial");
+    timelinePrevBtn.onClick = [this]() {
+        int numActive = 16;
+        if (auto* np = processor.apvts.getRawParameterValue("NUM_PARTIALS"))
+            numActive = juce::jlimit(1, 16, (int)np->load());
+        int prev = (selectedPartial - 1 + numActive) % numActive;
+        setSelectedPartial(prev);
+        if (onPartialSelected) onPartialSelected(prev);
+    };
+    addAndMakeVisible(timelinePrevBtn);
+
+    timelineNextBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF222222));
+    timelineNextBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    timelineNextBtn.setTooltip("Next Partial");
+    timelineNextBtn.onClick = [this]() {
+        int numActive = 16;
+        if (auto* np = processor.apvts.getRawParameterValue("NUM_PARTIALS"))
+            numActive = juce::jlimit(1, 16, (int)np->load());
+        int next = (selectedPartial + 1) % numActive;
+        setSelectedPartial(next);
+        if (onPartialSelected) onPartialSelected(next);
+    };
+    addAndMakeVisible(timelineNextBtn);
+
+    animModeBox.setScrollWheelEnabled(false);
     animModeBox.addItemList({ "Off", "Note Length", "Time: One-Shot", "Time: Loop", "Time: Ping-Pong" }, 1);
     animModeBox.setTooltip("Keyframe Mode: Note Length (relative to played note ADSR) or Time-Based (uses Duration)");
     animModeBox.onChange = [this]() {
@@ -779,6 +821,7 @@ Spectrograph::Spectrograph(WaveSlaveAudioProcessor& p)
     };
     addAndMakeVisible(animModeBox);
 
+    animCurveBox.setScrollWheelEnabled(false);
     animCurveBox.addItemList({ "Smooth", "Linear", "Step" }, 1);
     animCurveBox.setTooltip("Keyframe Interpolation Curve Type");
     animCurveBox.onChange = [this]() {
@@ -832,7 +875,22 @@ void Spectrograph::repaintTimeline()
 
 void Spectrograph::setSpectrumScaleMode(SpectrumScaleMode mode)
 {
-    scaleMode = mode;
+    if (scaleMode != mode)
+    {
+        scaleMode = mode;
+        if (isWaterfallMode)
+        {
+            waterfallImage = juce::Image();
+            waterfallHistory.clear();
+            waterfallLineY = 0;
+            lastSeenTriggerCounter = -1;
+            for (auto& dot : waterfallDots)
+                dot.hasValidPos = false;
+            dotAnimAlpha = 0.0f;
+            isDotAnimRunning = false;
+        }
+    }
+
     bool isFull = (scaleMode == SpectrumScaleMode::Full);
     slideBtn.setToggleState(!isFull, juce::dontSendNotification);
     slideBtn.setColour(juce::TextButton::buttonColourId, !isFull ? juce::Colour(0xFF444444) : juce::Colour(0xFF252525));
@@ -859,6 +917,9 @@ void Spectrograph::setTimelineComponent(juce::Component* comp)
 {
     timelineHost = comp;
     juce::Component* parent = (comp != nullptr) ? comp : this;
+    parent->addAndMakeVisible(timelinePrevBtn);
+    parent->addAndMakeVisible(timelinePartialBox);
+    parent->addAndMakeVisible(timelineNextBtn);
     parent->addAndMakeVisible(animEnableBtn);
     parent->addAndMakeVisible(addKfBtn);
     parent->addAndMakeVisible(delKfBtn);
@@ -940,9 +1001,31 @@ void Spectrograph::setSelectedPartial(int index)
     repaintTimeline();
 }
 
+void Spectrograph::updateTimelinePartialBoxItems()
+{
+    int numActive = 16;
+    if (auto* np = processor.apvts.getRawParameterValue("NUM_PARTIALS"))
+        numActive = juce::jlimit(1, 16, (int)np->load());
+
+    int prevSelected = timelinePartialBox.getSelectedId();
+    timelinePartialBox.clear(juce::dontSendNotification);
+    for (int i = 0; i < numActive; ++i)
+    {
+        timelinePartialBox.addItem("H" + juce::String(i + 1), i + 1);
+    }
+    int newSel = juce::jlimit(1, numActive, prevSelected > 0 ? prevSelected : (selectedPartial + 1));
+    timelinePartialBox.setSelectedId(newSel, juce::dontSendNotification);
+}
+
 void Spectrograph::syncTimelineControlsToSelectedPartial()
 {
     isSyncingTimelineControls = true;
+    updateTimelinePartialBoxItems();
+    timelinePartialBox.setSelectedId(selectedPartial + 1, juce::dontSendNotification);
+    auto col = getPartialColour(selectedPartial);
+    timelinePartialBox.setColour(juce::ComboBox::outlineColourId, col);
+    timelinePartialBox.setColour(juce::ComboBox::arrowColourId, col);
+
     juce::String s = juce::String(selectedPartial + 1);
 
     int mode = 0;
@@ -1015,7 +1098,7 @@ void Spectrograph::recordKeyframeFromSliders(int partialIndex)
     PartialAnimationData track = processor.getPartialAnimation(partialIndex);
     if (mode > 0)
     {
-        if (isTimelineOpen && !isPreviewPlaying)
+        if (isTimelineOpen)
         {
             kf.time = scrubTimeNorm;
             selectedKeyframeIndex = processor.addOrUpdateKeyframe(partialIndex, kf, 0.015f);
@@ -1030,25 +1113,24 @@ void Spectrograph::recordKeyframeFromSliders(int partialIndex)
             float dRatio  = kf.ratio    - prevEval.ratio;
             float dGain   = kf.gain     - prevEval.gain;
             float dSemi   = kf.semitone - prevEval.semitone;
-            float dDetune = kf.detune   - prevEval.detune;
             float dPan    = kf.pan      - prevEval.pan;
             for (int k = 0; k < track.numKeyframes; ++k)
             {
                 track.keyframes[k].ratio    = juce::jlimit(0.01f, 32.0f,  track.keyframes[k].ratio    + dRatio);
                 track.keyframes[k].gain     = juce::jlimit(0.0f,  1.0f,   track.keyframes[k].gain     + dGain);
                 track.keyframes[k].semitone = juce::jlimit(-24.0f, 24.0f, track.keyframes[k].semitone + dSemi);
-                track.keyframes[k].detune   = juce::jlimit(-50.0f, 50.0f, track.keyframes[k].detune   + dDetune);
+                track.keyframes[k].detune   = 0.0f;
                 track.keyframes[k].pan      = juce::jlimit(-1.0f,  1.0f,   track.keyframes[k].pan      + dPan);
             }
             processor.setPartialAnimation(partialIndex, track);
         }
     }
 
-    float effRatio = juce::jlimit(0.01f, 32.0f, kf.ratio * std::pow(2.0f, (kf.semitone + kf.detune / 100.0f) / 12.0f));
+    float effRatio = juce::jlimit(0.01f, 32.0f, kf.ratio * std::pow(2.0f, kf.semitone / 12.0f));
     smoothedModRatio[partialIndex]  = effRatio;
     smoothedModGain[partialIndex]   = kf.gain;
     smoothedModSemi[partialIndex]   = kf.semitone;
-    smoothedModDetune[partialIndex] = kf.detune;
+    smoothedModDetune[partialIndex] = 0.0f;
     smoothedModPan[partialIndex]    = kf.pan;
     repaint();
     repaintTimeline();
@@ -1084,6 +1166,9 @@ void Spectrograph::layoutKeyframeTimeline(juce::Rectangle<int> bounds)
         selMode = (int)p->load();
     bool showDurSlider = showTl && (selMode >= 2); // Only show time Duration slider in Time-based modes
 
+    timelinePrevBtn.setVisible(showTl);
+    timelinePartialBox.setVisible(showTl);
+    timelineNextBtn.setVisible(showTl);
     animEnableBtn.setVisible(showTl);
     addKfBtn.setVisible(showTl);
     delKfBtn.setVisible(showTl);
@@ -1097,7 +1182,14 @@ void Spectrograph::layoutKeyframeTimeline(juce::Rectangle<int> bounds)
 
     int tlY = bounds.getY() + 4;
     int rowH = 18;
-    int curX = bounds.getX() + 114; // Leave room on left for "TIMELINE" title & "H1" badge
+    int curX = bounds.getX() + 68; // Space for "TIMELINE" title
+
+    timelinePrevBtn.setBounds(curX, tlY, 16, rowH);
+    curX += 18;
+    timelinePartialBox.setBounds(curX, tlY, 48, rowH);
+    curX += 50;
+    timelineNextBtn.setBounds(curX, tlY, 16, rowH);
+    curX += 22;
 
     animEnableBtn.setBounds(curX, tlY, 34, rowH); curX += 38;
     addKfBtn.setBounds(curX, tlY, 34, rowH);      curX += 38;
@@ -1495,13 +1587,24 @@ void Spectrograph::updateWaterfallDots()
         float baseFreq = processor.lastTriggeredFrequency.load(std::memory_order_relaxed);
         if (baseFreq <= 0.0f) baseFreq = 440.0f;
 
-        auto inner = getLocalBounds().toFloat().reduced(12.0f);
-        float left = inner.getX();
-        float width = inner.getWidth();
+        auto plotBounds = getGraphPlotBounds();
+        float left = plotBounds.getX();
+        float width = plotBounds.getWidth();
+
+        auto* rParam = processor.apvts.getParameter("RATIO1");
 
         // Calculate fundamental root note position
-        float baseNormLog = std::log10(juce::jmax(20.0f, baseFreq) / 20.0f) / std::log10(20000.0f / 20.0f);
-        float baseX = left + juce::jlimit(0.0f, 1.0f, baseNormLog) * width;
+        float baseX = left;
+        if (scaleMode == SpectrumScaleMode::Full)
+        {
+            float baseNormLog = std::log10(juce::jmax(20.0f, baseFreq) / 20.0f) / std::log10(20000.0f / 20.0f);
+            baseX = left + juce::jlimit(0.0f, 1.0f, baseNormLog) * width;
+        }
+        else
+        {
+            float normBase = rParam ? rParam->convertTo0to1(1.0f) : 0.0f;
+            baseX = left + juce::jlimit(0.0f, 1.0f, normBase) * width;
+        }
 
         int numActive = (int)processor.apvts.getRawParameterValue("NUM_PARTIALS")->load();
         numActive = juce::jlimit(1, 16, numActive);
@@ -1519,13 +1622,20 @@ void Spectrograph::updateWaterfallDots()
                 if (auto* sp = processor.apvts.getParameter("SEMITONE" + idSuffix))
                     semiVal = sp->convertFrom0to1(sp->getValue());
 
-                float detuneVal = 0.0f;
-                if (auto* dp = processor.apvts.getParameter("DETUNE" + idSuffix))
-                    detuneVal = dp->convertFrom0to1(dp->getValue());
+                float effRatio = ratioVal * std::pow(2.0f, semiVal / 12.0f);
+                float harmFreq = baseFreq * effRatio;
 
-                float harmFreq = baseFreq * ratioVal * std::pow(2.0f, (semiVal + detuneVal * 0.01f) / 12.0f);
-                float normLog = std::log10(juce::jmax(20.0f, harmFreq) / 20.0f) / std::log10(20000.0f / 20.0f);
-                float targetX = left + juce::jlimit(0.0f, 1.0f, normLog) * width;
+                float targetX = left;
+                if (scaleMode == SpectrumScaleMode::Full)
+                {
+                    float normLog = std::log10(juce::jmax(20.0f, harmFreq) / 20.0f) / std::log10(20000.0f / 20.0f);
+                    targetX = left + juce::jlimit(0.0f, 1.0f, normLog) * width;
+                }
+                else
+                {
+                    float normRatio = rParam ? rParam->convertTo0to1(juce::jlimit(0.01f, 32.0f, effRatio)) : 0.0f;
+                    targetX = left + juce::jlimit(0.0f, 1.0f, normRatio) * width;
+                }
 
                 // Start position: current position if already visible, otherwise start at root note baseX
                 if (waterfallDots[i].hasValidPos && dotAnimAlpha > 0.05f)
@@ -1701,50 +1811,36 @@ Spectrograph::ComputedPartialCoords Spectrograph::computePartialCoords(int parti
     res.anchorRatio  = baseRatio;
     res.anchorGain   = baseGain;
     res.anchorSemi   = baseSemi;
-    res.anchorDetune = baseDetune;
+    res.anchorDetune = 0.0f;
     res.anchorPan    = basePan;
 
     PartialAnimationData track = processor.getPartialAnimation(partialIdx);
     bool voiceActive = processor.anyVoiceActiveVis.load(std::memory_order_relaxed);
-    bool timelinePaused = isTimelineOpen && !isPreviewPlaying;
-    float evalT = scrubTimeNorm;
-    if (!isLocked && animMode > 0 && draggedPartial != partialIdx && !isScrubbingTimeline && draggedKeyframeIndex < 0)
-    {
-        if (voiceActive && !timelinePaused)
-            evalT = processor.livePartialState[partialIdx].animPhase.load(std::memory_order_relaxed);
-        else if (!timelinePaused)
-            evalT = previewAnimPhases[partialIdx];
-    }
+    float evalT = (voiceActive && animMode > 0 && draggedPartial != partialIdx)
+                    ? processor.livePartialState[partialIdx].animPhase.load(std::memory_order_relaxed)
+                    : (isTimelineOpen ? scrubTimeNorm : 0.0f);
 
     if (animMode > 0 && track.numKeyframes > 0)
     {
         const PartialKeyframe& startKf = track.keyframes[0];
         PartialKeyframe evalKf = track.evaluate(evalT, animCurve, startKf);
-        float effDepth = (isLocked || draggedPartial == partialIdx || isScrubbingTimeline || draggedKeyframeIndex >= 0 || timelinePaused) ? 1.0f : animDepth;
+        float effDepth = (isLocked || draggedPartial == partialIdx || isTimelineOpen) ? 1.0f : animDepth;
         res.anchorRatio  = juce::jlimit(0.01f, 32.0f,  startKf.ratio    + effDepth * (evalKf.ratio    - startKf.ratio));
         res.anchorGain   = juce::jlimit(0.0f,  1.0f,   startKf.gain     + effDepth * (evalKf.gain     - startKf.gain));
         res.anchorSemi   = juce::jlimit(-24.0f, 24.0f, startKf.semitone + effDepth * (evalKf.semitone - startKf.semitone));
-        res.anchorDetune = juce::jlimit(-50.0f, 50.0f, startKf.detune   + effDepth * (evalKf.detune   - startKf.detune));
+        res.anchorDetune = 0.0f;
         res.anchorPan    = juce::jlimit(-1.0f,  1.0f,   startKf.pan      + effDepth * (evalKf.pan      - startKf.pan));
     }
 
-    float anchorEffRatio = juce::jlimit(0.01f, 32.0f, res.anchorRatio * std::pow(2.0f, (res.anchorSemi + res.anchorDetune / 100.0f) / 12.0f));
-    res.anchorPos = mapParamsToScreen(anchorEffRatio, res.anchorGain, res.anchorSemi, res.anchorDetune, left, top, width, height, baseFreq);
+    float anchorEffRatio = juce::jlimit(0.01f, 32.0f, res.anchorRatio * std::pow(2.0f, res.anchorSemi / 12.0f));
+    res.anchorPos = mapParamsToScreen(anchorEffRatio, res.anchorGain, res.anchorSemi, 0.0f, left, top, width, height, baseFreq);
 
-    int modTarget = 0;
-    float modDepth = 0.0f;
-    if (auto* p = processor.apvts.getRawParameterValue("MOD_TARGET" + s)) modTarget = (int)p->load();
-    if (auto* p = processor.apvts.getRawParameterValue("MOD_DEPTH" + s))  modDepth  = p->load();
-    bool hasLiveLfo = (modTarget > 0 && modDepth > 0.001f);
-    bool hasAnimPreview = (!timelinePaused && animMode > 0);
-    bool isEditingThis = (draggedPartial == partialIdx) || ((isScrubbingTimeline || draggedKeyframeIndex >= 0) && partialIdx == selectedPartial);
-
-    if (isLocked || isEditingThis || (!voiceActive && !hasLiveLfo && !hasAnimPreview))
+    if (!voiceActive || isLocked || draggedPartial == partialIdx)
     {
         res.modRatio  = anchorEffRatio;
         res.modGain   = res.anchorGain;
         res.modSemi   = res.anchorSemi;
-        res.modDetune = res.anchorDetune;
+        res.modDetune = 0.0f;
         res.modPan    = res.anchorPan;
         res.livePos   = res.anchorPos;
     }
@@ -1753,9 +1849,9 @@ Spectrograph::ComputedPartialCoords Spectrograph::computePartialCoords(int parti
         res.modRatio  = smoothedModRatio[partialIdx];
         res.modGain   = smoothedModGain[partialIdx];
         res.modSemi   = smoothedModSemi[partialIdx];
-        res.modDetune = smoothedModDetune[partialIdx];
+        res.modDetune = 0.0f;
         res.modPan    = smoothedModPan[partialIdx];
-        res.livePos   = mapParamsToScreen(res.modRatio, res.modGain, res.modSemi, res.modDetune, left, top, width, height, baseFreq);
+        res.livePos   = mapParamsToScreen(res.modRatio, res.modGain, res.modSemi, 0.0f, left, top, width, height, baseFreq);
     }
 
     return res;
@@ -1826,9 +1922,8 @@ int Spectrograph::findWaypointDiamondAt(float mouseX, float mouseY, int& outPart
             float r  = juce::jlimit(0.01f, 32.0f,  startKf.ratio    + effDepth * (kf.ratio    - startKf.ratio));
             float gn = juce::jlimit(0.0f,  1.0f,   startKf.gain     + effDepth * (kf.gain     - startKf.gain));
             float sm = juce::jlimit(-24.0f, 24.0f, startKf.semitone + effDepth * (kf.semitone - startKf.semitone));
-            float dt = juce::jlimit(-50.0f, 50.0f, startKf.detune   + effDepth * (kf.detune   - startKf.detune));
-            float effR = juce::jlimit(0.01f, 32.0f, r * std::pow(2.0f, (sm + dt / 100.0f) / 12.0f));
-            auto pt = mapParamsToScreen(effR, gn, sm, dt, left, top, width, height, baseFreq);
+            float effR = juce::jlimit(0.01f, 32.0f, r * std::pow(2.0f, sm / 12.0f));
+            auto pt = mapParamsToScreen(effR, gn, sm, 0.0f, left, top, width, height, baseFreq);
             float d = std::hypot(mouseX - pt.x, mouseY - pt.y);
             if (d <= bestD)
             {
@@ -1873,15 +1968,6 @@ void Spectrograph::paintKeyframeTimeline(juce::Graphics& g, juce::Rectangle<floa
     g.setColour(juce::Colours::white);
     g.setFont(juce::Font(11.0f, juce::Font::bold));
     g.drawText("TIMELINE", (int)timelineArea.getX() + 8, (int)timelineArea.getY() + 4, 58, 18, juce::Justification::centredLeft);
-
-    // Partial badge next to TIMELINE title
-    juce::Rectangle<float> badgeRect(timelineArea.getX() + 68.0f, timelineArea.getY() + 4.0f, 40.0f, 18.0f);
-    g.setColour(selCol.withAlpha(0.22f));
-    g.fillRoundedRectangle(badgeRect, 4.0f);
-    g.setColour(selCol);
-    g.drawRoundedRectangle(badgeRect, 4.0f, 1.2f);
-    g.setFont(juce::Font(10.0f, juce::Font::bold));
-    g.drawText("H" + juce::String(selectedPartial + 1), badgeRect.toNearestInt(), juce::Justification::centred);
 
     auto trackRect = getTimelineTrackBounds();
     g.setColour(juce::Colour(0xFF09090E));
@@ -2276,9 +2362,8 @@ void Spectrograph::paint(juce::Graphics& g)
                 float r  = juce::jlimit(0.01f, 32.0f,  startKf.ratio    + effDepth * (eval.ratio    - startKf.ratio));
                 float gn = juce::jlimit(0.0f,  1.0f,   startKf.gain     + effDepth * (eval.gain     - startKf.gain));
                 float sm = juce::jlimit(-24.0f, 24.0f, startKf.semitone + effDepth * (eval.semitone - startKf.semitone));
-                float dt = juce::jlimit(-50.0f, 50.0f, startKf.detune   + effDepth * (eval.detune   - startKf.detune));
-                float effR = juce::jlimit(0.01f, 32.0f, r * std::pow(2.0f, (sm + dt / 100.0f) / 12.0f));
-                auto pt = mapParamsToScreen(effR, gn, sm, dt, left, top, width, height, baseFreq);
+                float effR = juce::jlimit(0.01f, 32.0f, r * std::pow(2.0f, sm / 12.0f));
+                auto pt = mapParamsToScreen(effR, gn, sm, 0.0f, left, top, width, height, baseFreq);
                 if (step == 0) motionPath.startNewSubPath(pt);
                 else           motionPath.lineTo(pt);
             }
@@ -2295,9 +2380,8 @@ void Spectrograph::paint(juce::Graphics& g)
                 float r  = juce::jlimit(0.01f, 32.0f,  startKf.ratio    + effDepth * (kf.ratio    - startKf.ratio));
                 float gn = juce::jlimit(0.0f,  1.0f,   startKf.gain     + effDepth * (kf.gain     - startKf.gain));
                 float sm = juce::jlimit(-24.0f, 24.0f, startKf.semitone + effDepth * (kf.semitone - startKf.semitone));
-                float dt = juce::jlimit(-50.0f, 50.0f, startKf.detune   + effDepth * (kf.detune   - startKf.detune));
-                float effR = juce::jlimit(0.01f, 32.0f, r * std::pow(2.0f, (sm + dt / 100.0f) / 12.0f));
-                auto pt = mapParamsToScreen(effR, gn, sm, dt, left, top, width, height, baseFreq);
+                float effR = juce::jlimit(0.01f, 32.0f, r * std::pow(2.0f, sm / 12.0f));
+                auto pt = mapParamsToScreen(effR, gn, sm, 0.0f, left, top, width, height, baseFreq);
 
                 float dr = (isSel && k == selectedKeyframeIndex) ? 5.0f : (isSel ? 3.8f : 2.8f);
                 juce::Path dm;
@@ -2492,8 +2576,6 @@ void Spectrograph::paint(juce::Graphics& g)
                                  + " | Gain " + juce::String((int)std::round(c.modGain * 100.0f)) + "%";
             if (std::abs(c.modSemi) >= 0.05f)
                 hudText += " | " + juce::String(c.modSemi > 0 ? "+" : "") + juce::String((int)std::round(c.modSemi)) + "st";
-            if (std::abs(c.modDetune) >= 0.5f)
-                hudText += " | " + juce::String(c.modDetune > 0 ? "+" : "") + juce::String((int)std::round(c.modDetune)) + "ct";
 
             if (draggedPartial >= 0)
                 hudText += " [EDIT]";
@@ -2744,14 +2826,6 @@ void Spectrograph::handleTimelineMouseDrag(const juce::MouseEvent& e)
 
 void Spectrograph::handleTimelineMouseUp(const juce::MouseEvent&)
 {
-    if ((isScrubbingTimeline || draggedKeyframeIndex >= 0) && isPreviewPlaying)
-    {
-        int m = 0;
-        float tA = 0.01f, tD = 0.3f, tR = 0.5f;
-        float len = getEffectiveTimelineInfo(selectedPartial, m, tA, tD, tR);
-        previewAnimElapsed[selectedPartial] = scrubTimeNorm * len;
-        previewAnimPhases[selectedPartial]  = scrubTimeNorm;
-    }
     isScrubbingTimeline = false;
     draggedKeyframeIndex = -1;
     repaint();
@@ -2860,11 +2934,8 @@ void Spectrograph::mouseDown(const juce::MouseEvent& e)
         {
             selectedKeyframeIndex = diamondKf;
             draggedWaypointKeyframe = diamondKf;
-            if (!isPreviewPlaying)
-            {
-                scrubTimeNorm = dTrack.keyframes[diamondKf].time;
-                syncSlidersToPlayhead(hit);
-            }
+            scrubTimeNorm = dTrack.keyframes[diamondKf].time;
+            syncSlidersToPlayhead(hit);
         }
     }
 
@@ -2887,11 +2958,8 @@ void Spectrograph::mouseDown(const juce::MouseEvent& e)
                 {
                     selectedKeyframeIndex = diamondKf;
                     draggedWaypointKeyframe = diamondKf;
-                    if (!isPreviewPlaying)
-                    {
-                        scrubTimeNorm = dTrack.keyframes[diamondKf].time;
-                        syncSlidersToPlayhead(hit);
-                    }
+                    scrubTimeNorm = dTrack.keyframes[diamondKf].time;
+                    syncSlidersToPlayhead(hit);
                 }
             }
         }
@@ -2906,11 +2974,6 @@ void Spectrograph::mouseDown(const juce::MouseEvent& e)
         {
             gp->beginChangeGesture();
             initialGainNorm = gp->getValue();
-        }
-        if (auto* dp = processor.apvts.getParameter("DETUNE" + idSuffix))
-        {
-            dp->beginChangeGesture();
-            initialDetune = dp->convertFrom0to1(dp->getValue());
         }
         if (auto* sp = processor.apvts.getParameter("SEMITONE" + idSuffix))
         {
@@ -2964,7 +3027,7 @@ void Spectrograph::mouseDrag(const juce::MouseEvent& e)
     currentKf.time = scrubTimeNorm;
 
     // Keyframe at playhead when timeline is open and paused; otherwise shift existing keyframes (or update dragged waypoint diamond)
-    bool shouldUpdateKfAtPlayhead = (animMode > 0) && isTimelineOpen && !isPreviewPlaying;
+    bool shouldUpdateKfAtPlayhead = (animMode > 0) && isTimelineOpen;
 
     if (e.mods.isCommandDown() || e.mods.isCtrlDown())
     {
@@ -2996,8 +3059,8 @@ void Spectrograph::mouseDrag(const juce::MouseEvent& e)
                 targetEffRatio = rp->convertFrom0to1(normX);
         }
 
-        // Compensate for active semitone/detune shift so the node stays directly under cursor
-        float pitchShiftFactor = std::pow(2.0f, (currentKf.semitone + currentKf.detune / 100.0f) / 12.0f);
+        // Compensate for active semitone shift so the node stays directly under cursor
+        float pitchShiftFactor = std::pow(2.0f, currentKf.semitone / 12.0f);
         float newRatio = (pitchShiftFactor > 0.0001f) ? (targetEffRatio / pitchShiftFactor) : targetEffRatio;
 
         if (e.mods.isAltDown())
@@ -3042,7 +3105,7 @@ void Spectrograph::mouseDrag(const juce::MouseEvent& e)
         track.keyframes[draggedWaypointKeyframe].ratio    = currentKf.ratio;
         track.keyframes[draggedWaypointKeyframe].gain     = currentKf.gain;
         track.keyframes[draggedWaypointKeyframe].semitone = currentKf.semitone;
-        track.keyframes[draggedWaypointKeyframe].detune   = currentKf.detune;
+        track.keyframes[draggedWaypointKeyframe].detune   = 0.0f;
         processor.setPartialAnimation(draggedPartial, track);
     }
     else if (animMode > 0 && track.numKeyframes > 0)
@@ -3051,22 +3114,21 @@ void Spectrograph::mouseDrag(const juce::MouseEvent& e)
         float dRatio  = currentKf.ratio    - prevEval.ratio;
         float dGain   = currentKf.gain     - prevEval.gain;
         float dSemi   = currentKf.semitone - prevEval.semitone;
-        float dDetune = currentKf.detune   - prevEval.detune;
         for (int k = 0; k < track.numKeyframes; ++k)
         {
             track.keyframes[k].ratio    = juce::jlimit(0.01f, 32.0f,  track.keyframes[k].ratio    + dRatio);
             track.keyframes[k].gain     = juce::jlimit(0.0f,  1.0f,   track.keyframes[k].gain     + dGain);
             track.keyframes[k].semitone = juce::jlimit(-24.0f, 24.0f, track.keyframes[k].semitone + dSemi);
-            track.keyframes[k].detune   = juce::jlimit(-50.0f, 50.0f, track.keyframes[k].detune   + dDetune);
+            track.keyframes[k].detune   = 0.0f;
         }
         processor.setPartialAnimation(draggedPartial, track);
     }
 
-    float effRatio = juce::jlimit(0.01f, 32.0f, currentKf.ratio * std::pow(2.0f, (currentKf.semitone + currentKf.detune / 100.0f) / 12.0f));
+    float effRatio = juce::jlimit(0.01f, 32.0f, currentKf.ratio * std::pow(2.0f, currentKf.semitone / 12.0f));
     smoothedModRatio[draggedPartial]  = effRatio;
     smoothedModGain[draggedPartial]   = currentKf.gain;
     smoothedModSemi[draggedPartial]   = currentKf.semitone;
-    smoothedModDetune[draggedPartial] = currentKf.detune;
+    smoothedModDetune[draggedPartial] = 0.0f;
     smoothedModPan[draggedPartial]    = currentKf.pan;
 
     repaint();
@@ -3087,8 +3149,6 @@ void Spectrograph::mouseUp(const juce::MouseEvent&)
             rp->endChangeGesture();
         if (auto* gp = processor.apvts.getParameter("GAIN" + idSuffix))
             gp->endChangeGesture();
-        if (auto* dp = processor.apvts.getParameter("DETUNE" + idSuffix))
-            dp->endChangeGesture();
         if (auto* sp = processor.apvts.getParameter("SEMITONE" + idSuffix))
             sp->endChangeGesture();
 
@@ -3135,9 +3195,7 @@ void Spectrograph::mouseDoubleClick(const juce::MouseEvent& e)
 
 void Spectrograph::timerCallback()
 {
-    juce::uint32 nowMs = juce::Time::getMillisecondCounter();
-    float dt = juce::jlimit(0.001f, 0.1f, (float)(nowMs - lastTimerMs) * 0.001f);
-    lastTimerMs = nowMs;
+    lastTimerMs = juce::Time::getMillisecondCounter();
 
     int writePos = processor.ringBufferWritePos.load(std::memory_order_acquire);
     int startPos = (writePos - fftSize + processor.ringBufferSize) % processor.ringBufferSize;
@@ -3186,169 +3244,65 @@ void Spectrograph::timerCallback()
         if (auto* p = processor.apvts.getRawParameterValue("MOD_RATE" + s))     modRate   = p->load();
         if (auto* p = processor.apvts.getRawParameterValue("MOD_DEPTH" + s))    modDepth  = p->load();
 
-        // Advance editor-side LFO phase for idle/preview visualization
-        editorLfoPhases[i] = std::fmod(editorLfoPhases[i] + modRate * dt, 1.0f);
-
-        bool timelinePaused = isTimelineOpen && !isPreviewPlaying;
-
-        // Advance timeline playhead when playing
-        if (!timelinePaused)
+        // Advance timeline playhead and track positions ONLY when voice is active
+        if (voiceActive && animMode > 0)
         {
-            if (voiceActive && animMode > 0)
-            {
-                previewAnimPhases[i] = processor.livePartialState[i].animPhase.load(std::memory_order_relaxed);
-                if (i == selectedPartial && !isScrubbingTimeline && draggedKeyframeIndex < 0 && draggedPartial < 0)
-                    scrubTimeNorm = previewAnimPhases[i];
-            }
-            else if (animMode > 0 || isTimelineOpen)
-            {
-                previewAnimElapsed[i] += dt;
-                int effMode = (animMode > 0) ? animMode : 1;
-                if (effMode == 1)
-                {
-                    // Note Length preview (Attack -> Decay -> brief Sustain hold -> Release)
-                    int dummyMode = 0;
-                    float tA = 0.01f, tD = 0.1f, tR = 0.3f;
-                    getEffectiveTimelineInfo(i, dummyMode, tA, tD, tR);
-                    const float holdSec = 0.35f;
-                    float totalEnv = juce::jmax(0.01f, tA + tD + tR);
-                    float cycleSec = totalEnv + holdSec;
-                    float t = std::fmod(previewAnimElapsed[i], cycleSec);
-                    float sustainPh = (tA + tD) / totalEnv;
-                    if (t < tA + tD)
-                        previewAnimPhases[i] = t / totalEnv;
-                    else if (t < tA + tD + holdSec)
-                        previewAnimPhases[i] = sustainPh;
-                    else
-                        previewAnimPhases[i] = sustainPh + ((t - (tA + tD + holdSec)) / juce::jmax(0.001f, tR)) * (1.0f - sustainPh);
-                }
-                else if (effMode == 2 || effMode == 3)
-                {
-                    previewAnimPhases[i] = std::fmod(previewAnimElapsed[i] / animDur, 1.0f);
-                }
-                else
-                {
-                    float c = std::fmod(previewAnimElapsed[i] / animDur, 2.0f);
-                    previewAnimPhases[i] = (c <= 1.0f) ? c : (2.0f - c);
-                }
-
-                if (i == selectedPartial && !isScrubbingTimeline && draggedKeyframeIndex < 0 && draggedPartial < 0)
-                    scrubTimeNorm = previewAnimPhases[i];
-            }
+            float voicePhase = processor.livePartialState[i].animPhase.load(std::memory_order_relaxed);
+            previewAnimPhases[i] = voicePhase;
+            if (i == selectedPartial && !isScrubbingTimeline && draggedKeyframeIndex < 0 && draggedPartial < 0)
+                scrubTimeNorm = voicePhase;
         }
 
         float targetRatio  = baseRatio;
         float targetGain   = baseGain;
         float targetSemi   = baseSemi;
-        float targetDetune = baseDetune;
+        float targetDetune = 0.0f;
         float targetPan    = basePan;
 
-        if (voiceActive && (!timelinePaused || animMode == 0) && draggedPartial != i)
+        if (voiceActive && draggedPartial != i)
         {
             // Live modulation directly from active synth voice (includes ADSR, LFO, Keyframes, Glide!)
             targetRatio  = processor.livePartialState[i].effectiveRatio.load(std::memory_order_relaxed);
             targetGain   = processor.livePartialState[i].effectiveGain.load(std::memory_order_relaxed);
             targetSemi   = processor.livePartialState[i].effectiveSemitone.load(std::memory_order_relaxed);
-            targetDetune = processor.livePartialState[i].effectiveDetune.load(std::memory_order_relaxed);
+            targetDetune = 0.0f;
             targetPan    = processor.livePartialState[i].effectivePan.load(std::memory_order_relaxed);
         }
         else
         {
-            // Evaluate Keyframe Animation at playhead + apply ADSR & LFO
+            // Voice not active (or node being dragged)
             PartialAnimationData track = processor.getPartialAnimation(i);
-            float evalT = (!timelinePaused && draggedPartial != i && !isScrubbingTimeline && draggedKeyframeIndex < 0)
-                            ? previewAnimPhases[i]
-                            : scrubTimeNorm;
+            float evalT = isTimelineOpen ? scrubTimeNorm : 0.0f;
             if (animMode > 0 && track.numKeyframes > 0)
             {
                 const PartialKeyframe& startKf = track.keyframes[0];
                 PartialKeyframe evalKf = track.evaluate(evalT, animCurve, startKf);
-                float effDepth = (draggedPartial != i && !timelinePaused) ? animDepth : 1.0f;
+                float effDepth = (isTimelineOpen || draggedPartial == i) ? 1.0f : animDepth;
                 targetRatio  = juce::jlimit(0.01f, 32.0f,  startKf.ratio    + effDepth * (evalKf.ratio    - startKf.ratio));
                 targetGain   = juce::jlimit(0.0f,  1.0f,   startKf.gain     + effDepth * (evalKf.gain     - startKf.gain));
                 targetSemi   = juce::jlimit(-24.0f, 24.0f, startKf.semitone + effDepth * (evalKf.semitone - startKf.semitone));
-                targetDetune = juce::jlimit(-50.0f, 50.0f, startKf.detune   + effDepth * (evalKf.detune   - startKf.detune));
+                targetDetune = 0.0f;
                 targetPan    = juce::jlimit(-1.0f,  1.0f,   startKf.pan      + effDepth * (evalKf.pan      - startKf.pan));
-            }
-
-            // Apply ADSR envelope to node movement (from live voice if active, or simulated during Note Length timeline preview)
-            if (voiceActive && draggedPartial != i)
-            {
-                float envLvl = processor.livePartialState[i].envLevel.load(std::memory_order_relaxed);
-                targetGain = juce::jlimit(0.0f, 1.0f, targetGain * envLvl);
-            }
-            else if (isTimelineOpen && isPreviewPlaying && animMode == 1 && draggedPartial != i)
-            {
-                int dummyMode = 0;
-                float tA = 0.01f, tD = 0.3f, tR = 0.5f;
-                getEffectiveTimelineInfo(i, dummyMode, tA, tD, tR);
-                bool usePAdsr = false;
-                if (auto* pae = processor.apvts.getRawParameterValue("P_ADSR_ENABLED" + s))
-                    usePAdsr = (pae->load() > 0.5f);
-                float susLvl = usePAdsr
-                    ? (processor.apvts.getRawParameterValue("P_SUSTAIN" + s) ? processor.apvts.getRawParameterValue("P_SUSTAIN" + s)->load() : 1.0f)
-                    : (processor.apvts.getRawParameterValue("SUSTAIN") ? processor.apvts.getRawParameterValue("SUSTAIN")->load() : 0.8f);
-
-                float totalEnv = juce::jmax(0.01f, tA + tD + tR);
-                float atkEndPh = tA / totalEnv;
-                float susPh    = (tA + tD) / totalEnv;
-                float previewEnv = 1.0f;
-                if (evalT < atkEndPh)
-                    previewEnv = evalT / juce::jmax(0.0001f, atkEndPh);
-                else if (evalT < susPh)
-                    previewEnv = 1.0f - ((evalT - atkEndPh) / juce::jmax(0.0001f, susPh - atkEndPh)) * (1.0f - susLvl);
-                else
-                    previewEnv = susLvl * (1.0f - (evalT - susPh) / juce::jmax(0.0001f, 1.0f - susPh));
-
-                targetGain = juce::jlimit(0.0f, 1.0f, targetGain * juce::jlimit(0.0f, 1.0f, previewEnv));
-            }
-
-            // Apply LFO modulation to node movement
-            if (draggedPartial != i && modTarget > 0 && modDepth > 0.001f)
-            {
-                float ph = editorLfoPhases[i];
-                float lfoVal = 0.0f;
-                if (voiceActive)
-                {
-                    lfoVal = processor.livePartialState[i].lfoValue.load(std::memory_order_relaxed);
-                }
-                else
-                {
-                    switch (modWave)
-                    {
-                        case 0: lfoVal = std::sin(ph * juce::MathConstants<float>::twoPi); break;
-                        case 1: lfoVal = 2.0f * std::abs(2.0f * ph - 1.0f) - 1.0f; break;
-                        case 2: lfoVal = 2.0f * ph - 1.0f; break;
-                        case 3: lfoVal = ph < 0.5f ? 1.0f : -1.0f; break;
-                        default:
-                        {
-                            int slot = juce::jlimit(0, 3, modWave - 4);
-                            int idx = juce::jlimit(0, 511, (int)(ph * 511.0f));
-                            lfoVal = processor.customWavetables[slot][idx].load(std::memory_order_relaxed);
-                            break;
-                        }
-                    }
-                }
-
-                if (modTarget == 1)      targetSemi   = juce::jlimit(-24.0f, 24.0f, targetSemi + lfoVal * modDepth * 12.0f);
-                else if (modTarget == 2) targetGain   = juce::jlimit(0.0f, 1.0f, targetGain * (1.0f - modDepth * 0.5f * (1.0f - lfoVal)));
-                else if (modTarget == 3) targetPan    = juce::jlimit(-1.0f, 1.0f, masterPan + targetPan + lfoVal * modDepth);
-                else if (modTarget == 4) targetDetune = juce::jlimit(-50.0f, 50.0f, targetDetune + lfoVal * modDepth * 50.0f);
             }
             else
             {
-                targetPan = juce::jlimit(-1.0f, 1.0f, masterPan + targetPan);
+                targetRatio  = baseRatio;
+                targetGain   = baseGain;
+                targetSemi   = baseSemi;
+                targetDetune = 0.0f;
+                targetPan    = basePan;
             }
 
-            targetRatio = juce::jlimit(0.01f, 32.0f, targetRatio * std::pow(2.0f, (targetSemi + targetDetune / 100.0f) / 12.0f));
+            targetPan = juce::jlimit(-1.0f, 1.0f, masterPan + targetPan);
+            targetRatio = juce::jlimit(0.01f, 32.0f, targetRatio * std::pow(2.0f, targetSemi / 12.0f));
         }
 
-        if (!smoothedInit)
+        if (!smoothedInit || !voiceActive)
         {
             smoothedModRatio[i]  = targetRatio;
             smoothedModGain[i]   = targetGain;
             smoothedModSemi[i]   = targetSemi;
-            smoothedModDetune[i] = targetDetune;
+            smoothedModDetune[i] = 0.0f;
             smoothedModPan[i]    = targetPan;
         }
         else
@@ -3357,7 +3311,7 @@ void Spectrograph::timerCallback()
             smoothedModRatio[i]  += smoothAlpha * (targetRatio  - smoothedModRatio[i]);
             smoothedModGain[i]   += smoothAlpha * (targetGain   - smoothedModGain[i]);
             smoothedModSemi[i]   += smoothAlpha * (targetSemi   - smoothedModSemi[i]);
-            smoothedModDetune[i] += smoothAlpha * (targetDetune - smoothedModDetune[i]);
+            smoothedModDetune[i] = 0.0f;
             smoothedModPan[i]    += smoothAlpha * (targetPan    - smoothedModPan[i]);
         }
     }

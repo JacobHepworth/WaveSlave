@@ -122,7 +122,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout WaveSlaveAudioProcessor::cre
     juce::StringArray waveforms = { "Sine", "Triangle", "Saw", "Square", "Pulse", "Sharkfin", "Fibonacci", "Noise", "Custom 1", "Custom 2", "Custom 3", "Custom 4" };
     layout.add(std::make_unique<juce::AudioParameterChoice>("BASE_WAVEFORM", "Base Waveform", waveforms, 0));
 
-    juce::StringArray modTargets = { "None", "Pitch", "Level", "Pan", "Detune" };
+    juce::StringArray modTargets = { "None", "Pitch", "Level", "Pan" };
     juce::StringArray modWaveforms = { "Sine", "Triangle", "Saw", "Square", "Custom 1", "Custom 2", "Custom 3", "Custom 4" };
 
     for (int i = 1; i <= 16; ++i)
