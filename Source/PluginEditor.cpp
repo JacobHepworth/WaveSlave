@@ -1878,32 +1878,37 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
     }
 
     // ------------------------------------------------------------------------
-    else if (index == 13) // Too Much Glue! - warm analog harmonic cluster with lush chorusing and glued texture
+    else if (index == 13) // Too Much Glue! - thick, morphing asynchronous multi-partial cluster
     {
         setParam(ap, "NUM_PARTIALS", 8.0f);
         setParam(ap, "VOICE_MODE",   0.0f); // Poly
         setParam(ap, "VELOCITY_ENABLED", 1.0f);
 
-        // Warm harmonic cluster with subtle micro-tuning spread
-        float ratios[8]   = { 1.0f,  2.0f,   2.99f,  4.01f,   5.0f,   6.01f,  7.0f,   8.0f };
-        float gains[8]    = { 1.0f,  0.70f,  0.52f,  0.42f,   0.32f,  0.24f,  0.16f,  0.10f };
-        float detunes[8]  = { 0.0f,  2.0f,  -2.0f,   2.5f,   -2.5f,   1.5f,  -1.5f,   0.0f };
-        float pans[8]     = { 0.0f, -0.35f,  0.35f, -0.55f,   0.55f, -0.70f,  0.70f,  0.0f };
-        // Tri, Sharkfin, Saw, Tri, Pulse, Sharkfin, Sine, Saw
-        float waves[8]    = { 1.0f,  5.0f,   2.0f,   1.0f,    4.0f,   5.0f,   0.0f,   2.0f };
+        // Irrational/inharmonic cluster ratios that morph together into a thick texture
+        float ratios[8]   = { 1.0f,  1.414f, 2.18f,  3.1416f, 4.67f,  6.283f, 8.53f,  11.37f };
+        float gains[8]    = { 1.0f,  0.75f,  0.65f,  0.55f,   0.45f,  0.38f,  0.30f,  0.22f };
+        float detunes[8]  = { 0.0f,  3.5f,  -4.0f,   2.5f,   -3.0f,   5.0f,  -4.5f,   1.5f };
+        float pans[8]     = { 0.0f, -0.60f,  0.60f, -0.35f,   0.35f, -0.75f,  0.75f,  0.0f };
+        // Tri, Sharkfin, Fibonacci, Saw, Pulse, Tri, Sharkfin, Fibonacci
+        float waves[8]    = { 1.0f,  5.0f,   6.0f,   2.0f,    4.0f,   1.0f,   5.0f,   6.0f };
 
-        // Warm tape-like ADSRs: gentle swelling attacks, smooth decays, rich sustains
-        float atks[8] = { 0.05f, 0.12f, 0.20f, 0.08f, 0.25f, 0.18f, 0.30f, 0.22f };
-        float decs[8] = { 0.90f, 1.20f, 1.40f, 1.00f, 1.30f, 1.50f, 1.20f, 1.40f };
-        float suss[8] = { 0.95f, 0.80f, 0.75f, 0.70f, 0.65f, 0.60f, 0.50f, 0.45f };
-        float rels[8] = { 1.20f, 1.50f, 1.60f, 1.40f, 1.70f, 1.60f, 1.80f, 1.50f };
+        // Overlapping asynchronous ADSRs - partials bloom and decay at staggered rates
+        float atks[8] = { 0.03f, 0.60f, 1.20f, 0.05f, 1.80f, 0.40f, 0.90f, 1.40f };
+        float decs[8] = { 0.80f, 1.30f, 1.80f, 0.55f, 1.20f, 1.60f, 0.95f, 1.30f };
+        float suss[8] = { 0.90f, 0.60f, 0.70f, 0.35f, 0.65f, 0.55f, 0.45f, 0.35f };
+        float rels[8] = { 1.40f, 1.90f, 2.20f, 0.80f, 2.40f, 1.60f, 2.00f, 2.60f };
 
-        // Subtle, slow ensemble chorus modulation (tape wow/flutter & slow spatial spread)
-        // Targets: 0=None, 1=Pitch, 2=Level, 3=Pan
-        float modTargets[8] = { 0.0f,   3.0f,   2.0f,   1.0f,   3.0f,   2.0f,   1.0f,   3.0f };
-        float modRates[8]   = { 0.0f,   0.28f,  0.35f,  0.22f,  0.31f,  0.42f,  0.19f,  0.25f };
-        float modDepths[8]  = { 0.0f,   0.30f,  0.20f,  0.012f, 0.35f,  0.22f,  0.010f, 0.30f };
-        float modWaves[8]   = { 0.0f,   1.0f,   0.0f,   1.0f,   0.0f,   1.0f,   0.0f,   1.0f }; // Sine, Tri
+        // LFO Modulation across all 8 partials:
+        // Targets: 1=Pitch, 2=Level, 3=Pan
+        float modTargets[8] = { 1.0f,   2.0f,   3.0f,   1.0f,   2.0f,   3.0f,   1.0f,   3.0f };
+        float modRates[8]   = { 0.32f,  0.85f,  0.42f,  1.10f,  1.35f,  0.52f,  0.65f,  0.28f };
+        float modDepths[8]  = { 0.035f, 0.45f,  0.70f,  0.055f, 0.50f,  0.80f,  0.045f, 0.65f };
+        float modWaves[8]   = { 0.0f,   1.0f,   2.0f,   0.0f,   1.0f,   0.0f,   1.0f,   2.0f }; // Sine, Tri, Saw...
+
+        // Keyframe Animation: dynamic evolving paths across all 8 partials
+        float animModes[8]  = { 3.0f,  4.0f,  3.0f,  4.0f,  3.0f,  4.0f,  3.0f,  4.0f }; // Loop & Ping-Pong
+        float animCurves[8] = { 0.0f,  0.0f,  1.0f,  0.0f,  0.0f,  1.0f,  0.0f,  0.0f }; // Smooth & Linear
+        float animDurs[8]   = { 2.6f,  1.9f,  3.4f,  2.2f,  3.8f,  2.8f,  4.2f,  3.1f };
 
         audioProcessor.clearAllKeyframes();
 
@@ -1924,49 +1929,55 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             setParam(ap, "MOD_RATE"      + juce::String(i), modRates[i-1]);
             setParam(ap, "MOD_DEPTH"     + juce::String(i), modDepths[i-1]);
             setParam(ap, "MOD_WAVEFORM"  + juce::String(i), modWaves[i-1]);
-            setParam(ap, "MOD_PHASE"     + juce::String(i), (float)((i * 45) % 360));
+            setParam(ap, "MOD_PHASE"     + juce::String(i), (float)((i * 47) % 360));
 
-            if (i == 3 || i == 6)
+            setParam(ap, "ANIM_MODE"     + juce::String(i), animModes[i-1]);
+            setParam(ap, "ANIM_CURVE"    + juce::String(i), animCurves[i-1]);
+            setParam(ap, "ANIM_DURATION" + juce::String(i), animDurs[i-1]);
+            setParam(ap, "ANIM_DEPTH"    + juce::String(i), 0.70f);
+
+            PartialAnimationData track;
+            float r0 = ratios[i-1];
+            float g0 = gains[i-1];
+            float d0 = detunes[i-1];
+            float p0 = pans[i-1];
+
+            if (i == 1)
             {
-                // Subtle harmonic breathing on partials 3 & 6
-                setParam(ap, "ANIM_MODE"     + juce::String(i), 3.0f); // Time: Loop
-                setParam(ap, "ANIM_CURVE"    + juce::String(i), 0.0f); // Smooth
-                setParam(ap, "ANIM_DURATION" + juce::String(i), i == 3 ? 4.5f : 5.8f);
-                setParam(ap, "ANIM_DEPTH"    + juce::String(i), 0.30f);
-
-                PartialAnimationData track;
-                float r0 = ratios[i-1];
-                float g0 = gains[i-1];
-                float p0 = pans[i-1];
-                track.keyframes[0] = { 0.0f,  r0, g0,         0.0f,  0.0f, p0 };
-                track.keyframes[1] = { 0.35f, r0, g0 * 0.75f, 0.0f,  0.0f, p0 * 0.5f };
-                track.keyframes[2] = { 0.70f, r0, g0 * 1.15f, 0.0f,  0.0f, p0 * 1.2f };
-                track.keyframes[3] = { 1.0f,  r0, g0,         0.0f,  0.0f, p0 };
-                track.numKeyframes = 4;
-                audioProcessor.setPartialAnimation(i - 1, track);
+                // Fundamental partial anchors the root: evolves gain and pan, no semitone pitch shifts
+                track.keyframes[0] = { 0.0f,  r0, g0,         0.0f, 0.0f,  p0 };
+                track.keyframes[1] = { 0.35f, r0, g0 * 0.75f, 0.0f, 1.5f,  -0.25f };
+                track.keyframes[2] = { 0.70f, r0, g0 * 1.15f, 0.0f, -1.5f,  0.25f };
+                track.keyframes[3] = { 1.0f,  r0, g0,         0.0f, 0.0f,  p0 };
             }
             else
             {
-                setParam(ap, "ANIM_MODE"     + juce::String(i), 0.0f);
-                setParam(ap, "ANIM_CURVE"    + juce::String(i), 0.0f);
-                setParam(ap, "ANIM_DURATION" + juce::String(i), 2.0f);
-                setParam(ap, "ANIM_DEPTH"    + juce::String(i), 0.0f);
+                // Upper partials: dynamic gain breathing, wide stereo sweeping, analog detune motion, and cohesive micro-semitone shimmer
+                float semiDelta = (i % 2 == 0) ? 0.50f : -0.50f;
+                float rMorph1   = r0 * 1.02f;
+                float rMorph2   = r0 * 0.98f;
+                track.keyframes[0] = { 0.0f,  r0,      g0,                                     0.0f,       d0,                 p0 };
+                track.keyframes[1] = { 0.35f, rMorph1, juce::jlimit(0.05f, 1.0f, g0 * 0.65f),  semiDelta,  -d0 * 0.7f + 5.0f,  -p0 * 0.8f };
+                track.keyframes[2] = { 0.70f, rMorph2, juce::jlimit(0.05f, 1.0f, g0 * 1.20f), -semiDelta,  d0 * 0.5f - 4.0f,   p0 * 1.2f };
+                track.keyframes[3] = { 1.0f,  r0,      g0,                                     0.0f,       d0,                 p0 };
             }
+            track.numKeyframes = 4;
+            audioProcessor.setPartialAnimation(i - 1, track);
         }
         for (int i = 9; i <= 16; ++i)
             setParam(ap, "GAIN" + juce::String(i), 0.0f);
 
-        setParam(ap, "ATTACK",      0.08f);
-        setParam(ap, "DECAY",       1.40f);
-        setParam(ap, "SUSTAIN",     0.80f);
-        setParam(ap, "RELEASE",     1.60f);
-        setParam(ap, "MASTER_GAIN", 0.52f);
+        setParam(ap, "ATTACK",      0.05f);
+        setParam(ap, "DECAY",       1.50f);
+        setParam(ap, "SUSTAIN",     0.85f);
+        setParam(ap, "RELEASE",     2.20f);
+        setParam(ap, "MASTER_GAIN", 0.50f);
         setParam(ap, "HPF_ENABLED", 1.0f);
         setParam(ap, "HPF_CUTOFF",  30.0f);
         setParam(ap, "HPF_RESO",    0.707f);
         setParam(ap, "LPF_ENABLED", 1.0f);
-        setParam(ap, "LPF_CUTOFF",  3600.0f);
-        setParam(ap, "LPF_RESO",    1.15f);
+        setParam(ap, "LPF_CUTOFF",  4200.0f);
+        setParam(ap, "LPF_RESO",    1.80f);
     }
 
     // ------------------------------------------------------------------------
