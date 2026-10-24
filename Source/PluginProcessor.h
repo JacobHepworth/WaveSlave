@@ -42,15 +42,51 @@ public:
     std::array<std::array<float, ringBufferSize>, 16> partialRingBuffer;
     std::atomic<int> ringBufferWritePos { 0 };
     std::atomic<float> lastPlayedFrequency { 440.0f };
+    std::atomic<float> lastTriggeredFrequency { 440.0f };
+    std::atomic<int> noteTriggerCounter { 0 };
 
-    std::array<std::atomic<float>, 512> customWavetable;
-    void generateStandardWaveToCustomTable(int waveType);
+    // QWERTY MIDI virtual keyboard state - editor writes note on/off here
+    juce::MidiKeyboardState midiKeyboardState;
+
+    static constexpr int numCustomSlots = 4;
+    std::array<std::array<std::atomic<float>, 512>, numCustomSlots> customWavetables;
+    void generateStandardWaveToCustomTable(int slot, int waveType);
+    void generateStandardWaveToCustomTable(int waveType) { generateStandardWaveToCustomTable(0, waveType); }
+    void allNotesOff();
+
+    // Live per-partial modulation state for graph node visualization (ADSR + LFO + Keyframes)
+    std::array<LivePartialVisState, 16> livePartialState;
+    std::atomic<bool> anyVoiceActiveVis { false };
+    std::atomic<int> latestActiveVoiceIndex { 0 };
+
+    // Per-Partial Keyframe Animation tracks (thread-safe access)
+    PartialAnimationData getPartialAnimation(int partialIndex) const;
+    void setPartialAnimation(int partialIndex, const PartialAnimationData& data);
+    int addOrUpdateKeyframe(int partialIndex, const PartialKeyframe& kf, float timeTolerance = 0.015f);
+    void removeKeyframe(int partialIndex, int keyframeIndex);
+    int moveKeyframeTime(int partialIndex, int keyframeIndex, float newTime);
+    void clearKeyframes(int partialIndex);
+    void clearAllKeyframes();
+    void ensureInitialKeyframes(int partialIndex);
+    PartialKeyframe getPartialBaseSettings(int partialIndex) const;
+    void serializeAnimationsToXml(juce::XmlElement& parentXml) const;
+    void deserializeAnimationsFromXml(const juce::XmlElement& parentXml);
 
 private:
     juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
+    mutable juce::SpinLock animLock;
+    std::array<PartialAnimationData, 16> partialAnimations;
+
     juce::Synthesiser synth;
     juce::AudioBuffer<float> partialVisualizerBuffer; // Used temporarily by SynthVoice during render
+
+    juce::dsp::StateVariableTPTFilter<float> lowPassFilter;
+    juce::dsp::StateVariableTPTFilter<float> highPassFilter;
+
+    std::vector<std::pair<int, float>> heldMidiNotes;
+    std::set<int> sustainedNotes;
+    bool sustainPedalDown = false;
 
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WaveSlaveAudioProcessor)

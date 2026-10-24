@@ -10,7 +10,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(juce)
 
-juce_set_vst2_sdk_path("${CMAKE_CURRENT_SOURCE_DIR}/vst2sdk/vstsdk2.4")
+# juce_set_vst2_sdk_path("${CMAKE_CURRENT_SOURCE_DIR}/vst2sdk/vstsdk2.4")
 
 # Create a JUCE plugin
 juce_add_plugin(WaveSlave
@@ -23,7 +23,8 @@ juce_add_plugin(WaveSlave
     COPY_PLUGIN_AFTER_BUILD FALSE
     PLUGIN_MANUFACTURER_CODE WvSl
     PLUGIN_CODE WvSl
-    FORMATS VST VST3 Standalone
+    FORMATS VST3 Standalone
+    VST3_AUTO_MANIFEST FALSE
 )
 
 juce_generate_juce_header(WaveSlave)
