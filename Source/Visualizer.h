@@ -21,10 +21,11 @@ public:
         setColour(juce::ComboBox::textColourId,              juce::Colours::white);
         setColour(juce::ComboBox::outlineColourId,           juce::Colour(0xFF555555));
         setColour(juce::ComboBox::arrowColourId,             juce::Colour(0xFFFFFFFF));
-        setColour(juce::PopupMenu::backgroundColourId,       juce::Colour(0xFF222222));
+        setColour(juce::PopupMenu::backgroundColourId,       juce::Colour(0xFF1E1E1E));
         setColour(juce::PopupMenu::textColourId,             juce::Colours::white);
-        setColour(juce::PopupMenu::highlightedBackgroundColourId, juce::Colour(0xFFFFFFFF));
-        setColour(juce::PopupMenu::highlightedTextColourId,  juce::Colours::black);
+        setColour(juce::PopupMenu::highlightedBackgroundColourId, juce::Colour(0xFF383838));
+        setColour(juce::PopupMenu::highlightedTextColourId,  juce::Colours::white);
+        setColour(juce::PopupMenu::headerTextColourId,       juce::Colour(0xFF888888));
         setColour(juce::ScrollBar::thumbColourId,            juce::Colour(0xFFFFFFFF).withAlpha(0.5f));
     }
 
@@ -181,7 +182,7 @@ inline juce::Colour getPartialColour(int index)
 
 //==============================================================================
 // Stylized Oscilloscope with glow, grid, rounded corners, and overlapping partials
-class Oscilloscope : public juce::Component, public juce::Timer
+class Oscilloscope : public juce::Component, public juce::Timer, public juce::FileDragAndDropTarget
 {
 public:
     Oscilloscope(WaveSlaveAudioProcessor& p);
@@ -190,6 +191,10 @@ public:
     void paint(juce::Graphics& g) override;
     void resized() override;
     void timerCallback() override;
+
+    bool isInterestedInFileDrag(const juce::StringArray& files) override;
+    void filesDropped(const juce::StringArray& files, int x, int y) override;
+    void loadWavFile(const juce::File& file);
 
     void setOverlaysEnabled(bool enabled) { showOverlays = enabled; repaint(); }
     bool areOverlaysEnabled() const { return showOverlays; }
@@ -221,16 +226,20 @@ private:
     bool showOverlays = false;
     bool isPolar = false;
     bool isDrawMode = false;
+    bool isFrozen = false;
     int currentSlot = 0; // 0..3 (Custom 1..4)
 
     juce::TextButton overlayBtn { "OVLY" };
-    juce::TextButton polarBtn { "POLAR" };
-    juce::TextButton drawBtn { "DRAW" };
+    juce::TextButton polarBtn   { "POLAR" };
+    juce::TextButton freezeBtn  { "FREEZE" };
+    juce::TextButton drawBtn    { "DRAW" };
 
     // Custom waveform editor controls (shown when DRAW is active)
     juce::ComboBox slotSelector;
     juce::ToggleButton bezierToggle { "Smooth" };
-    juce::TextButton clearBtn { "CLR" };
+    juce::TextButton clearBtn   { "CLR" };
+    juce::TextButton loadWavBtn { "WAV" };
+    std::unique_ptr<juce::FileChooser> fileChooser;
 
     std::array<std::vector<juce::Point<float>>, 4> slotSplinePoints;
     int draggedPointIndex = -1;
@@ -355,6 +364,7 @@ private:
     float initialRatioNorm = 0.0f;
     float initialGainNorm = 0.0f;
     float initialSemitone = 0.0f;
+    bool isDraggingSemitone = false;
     PartialKeyframe initialDragKeyframe;
     bool isFullCanvas = false;
     bool isReadOnly = false;
@@ -379,6 +389,7 @@ private:
     juce::TextButton addKfBtn      { "+KF" };
     juce::TextButton delKfBtn      { "-KF" };
     juce::TextButton clearKfBtn    { "CLR" };
+    juce::TextButton timelineLockBtn { "LOCK" };
     juce::ComboBox   animModeBox;
     juce::ComboBox   animCurveBox;
     juce::Slider     animDurSlider;
@@ -420,9 +431,14 @@ private:
     juce::TextButton slideBtn     { "SLIDE" };
     juce::TextButton fullBtn      { "FULL" };
     juce::TextButton lockBtn      { "LOCK" };
+    juce::TextButton freezeBtn    { "FREEZE" };
     juce::TextButton showNodesBtn { "NODES" };
     bool isLocked = false;
     bool isWaterfallMode = false;
+    bool isFrozen = false;
+
+    juce::Point<float> mouseHoverPos { -1.0f, -1.0f };
+    bool isMouseHovering = false;
 
     // Waterfall state
     WaterfallPalette currentPalette = WaterfallPalette::Spectrum;
@@ -453,6 +469,7 @@ private:
     void paintWaterfallDots(juce::Graphics& g, float left, float top, float width, float height);
 
     juce::Colour waterfallColour(float level) const;
+    void updateWaterfallRow();
     void paintWaterfall(juce::Graphics& g, float left, float top, float width, float height);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Spectrograph)

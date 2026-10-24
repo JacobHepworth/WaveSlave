@@ -35,6 +35,7 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+    juce::UndoManager undoManager;
     juce::AudioProcessorValueTreeState apvts;
     
     static constexpr int ringBufferSize = 4096;
@@ -45,6 +46,23 @@ public:
     std::atomic<float> lastTriggeredFrequency { 440.0f };
     std::atomic<int> noteTriggerCounter { 0 };
 
+    // Real-time Peak dBFS Metering & Clipping Detection
+    std::atomic<float> peakMeterL { 0.0f };
+    std::atomic<float> peakMeterR { 0.0f };
+
+    // Host Tempo / BPM tracking
+    std::atomic<float> currentBpm { 120.0f };
+
+    // Partial Solo State (thread-safe, shared across voices and UI)
+    std::array<std::atomic<bool>, 16> partialSoloState {};
+
+    // Window size persistence
+    int editorWidth = 940;
+    int editorHeight = 660;
+
+    // Audio format manager for single-cycle WAV loading
+    juce::AudioFormatManager formatManager;
+
     // QWERTY MIDI virtual keyboard state - editor writes note on/off here
     juce::MidiKeyboardState midiKeyboardState;
 
@@ -54,6 +72,7 @@ public:
     void generateStandardWaveToCustomTable(int slot, int waveType);
     void generateStandardWaveToCustomTable(int waveType) { generateStandardWaveToCustomTable(0, waveType); }
     void allNotesOff();
+    void syncLivePartialStateFromParams();
 
     // Live per-partial modulation state for graph node visualization (ADSR + LFO + Keyframes)
     std::array<LivePartialVisState, 16> livePartialState;
@@ -82,8 +101,18 @@ private:
     juce::Synthesiser synth;
     juce::AudioBuffer<float> partialVisualizerBuffer; // Used temporarily by SynthVoice during render
 
+    // Parameter smoothers for de-zippering
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedMasterGain;
+
+    // Filters
     juce::dsp::StateVariableTPTFilter<float> lowPassFilter;
     juce::dsp::StateVariableTPTFilter<float> highPassFilter;
+
+    // Built-in Effects (Chorus, Delay, Reverb)
+    juce::dsp::Chorus<float> chorusEffect;
+    juce::dsp::Reverb reverbEffect;
+    juce::AudioBuffer<float> delayBuffer;
+    int delayWritePos = 0;
 
     std::vector<std::pair<int, float>> heldMidiNotes;
     std::set<int> sustainedNotes;

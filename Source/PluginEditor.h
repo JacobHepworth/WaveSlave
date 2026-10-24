@@ -36,8 +36,10 @@ public:
 class LabeledSlider : public juce::Component
 {
 public:
+    enum class LabelPosition { Left, Top };
+
     LabeledSlider(const juce::String& labelText, bool isVertical = true, int customLabelWidth = -1)
-        : vertical(isVertical), labelWidth(customLabelWidth)
+        : vertical(isVertical), labelWidth(customLabelWidth), labelPos(LabelPosition::Left)
     {
         label.setText(labelText, juce::dontSendNotification);
         label.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.7f));
@@ -61,10 +63,37 @@ public:
         }
     }
 
+    void setLabelPosition(LabelPosition pos)
+    {
+        labelPos = pos;
+        if (labelPos == LabelPosition::Top)
+        {
+            label.setJustificationType(juce::Justification::centredLeft);
+            label.setFont(juce::Font(10.0f));
+        }
+        else if (!vertical)
+        {
+            label.setJustificationType(juce::Justification::centredLeft);
+            label.setFont(juce::Font(11.0f));
+        }
+        updateTextBoxStyle();
+        resized();
+    }
+
+    void setTextBoxToRight(bool right, int w = 38, int h = 14)
+    {
+        textBoxOnRight = right;
+        textBoxWidth = w;
+        textBoxHeight = h;
+        updateTextBoxStyle();
+    }
+
     void setLabelWidth(int w) { labelWidth = w; resized(); }
     void setTextBoxWidth(int w, int h = 16)
     {
-        slider.setTextBoxStyle(vertical ? juce::Slider::TextBoxBelow : juce::Slider::TextBoxLeft, false, w, h);
+        textBoxWidth = w;
+        textBoxHeight = h;
+        updateTextBoxStyle();
     }
 
     void resized() override
@@ -73,6 +102,11 @@ public:
         if (vertical)
         {
             label.setBounds(area.removeFromTop(16));
+            slider.setBounds(area);
+        }
+        else if (labelPos == LabelPosition::Top)
+        {
+            label.setBounds(area.removeFromTop(13));
             slider.setBounds(area);
         }
         else
@@ -87,12 +121,114 @@ public:
     juce::Label label;
     bool vertical;
     int labelWidth = -1;
+    LabelPosition labelPos = LabelPosition::Left;
+
+private:
+    void updateTextBoxStyle()
+    {
+        auto boxStyle = vertical ? juce::Slider::TextBoxBelow
+                                 : (textBoxOnRight ? juce::Slider::TextBoxRight : juce::Slider::TextBoxLeft);
+        slider.setTextBoxStyle(boxStyle, false, textBoxWidth, textBoxHeight);
+    }
+
+    bool textBoxOnRight = false;
+    int textBoxWidth = 38;
+    int textBoxHeight = 14;
 };
 
 //==============================================================================
-// A single partial strip component (self-contained card)
+// Stereo Peak Meter Component with dB gradient & clip indicator (Horizontal)
 //==============================================================================
+class StereoPeakMeter : public juce::Component, private juce::Timer
+{
+public:
+    StereoPeakMeter(WaveSlaveAudioProcessor& p) : processor(p)
+    {
+        startTimerHz(30);
+    }
+    ~StereoPeakMeter() override
+    {
+        stopTimer();
+    }
 
+    void timerCallback() override
+    {
+        if (!isShowing()) return;
+
+        // Atomically read and reset peak
+        float rawL = processor.peakMeterL.exchange(0.0f, std::memory_order_relaxed);
+        float rawR = processor.peakMeterR.exchange(0.0f, std::memory_order_relaxed);
+
+        // Smooth decay (~300ms release)
+        currentL = juce::jmax(rawL, currentL * 0.85f);
+        currentR = juce::jmax(rawR, currentR * 0.85f);
+
+        if (currentL >= 0.999f || currentR >= 0.999f)
+            clipHoldCounter = 30; // ~1 second hold
+        else if (clipHoldCounter > 0)
+            --clipHoldCounter;
+
+        repaint();
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        auto bounds = getLocalBounds().toFloat();
+        if (bounds.getWidth() <= 10.0f || bounds.getHeight() <= 4.0f) return;
+
+        g.setColour(juce::Colour(0xFF141414));
+        g.fillRoundedRectangle(bounds, 2.0f);
+        g.setColour(juce::Colour(0xFF282828));
+        g.drawRoundedRectangle(bounds, 2.0f, 1.0f);
+
+        auto inner = bounds.reduced(2.0f, 1.0f);
+        float clipW = 6.0f;
+        auto clipArea = inner.removeFromRight(clipW);
+        inner.removeFromRight(2.0f);
+
+        // Clip indicator on the right edge
+        if (clipHoldCounter > 0)
+            g.setColour(juce::Colour(0xFFFF2222));
+        else
+            g.setColour(juce::Colour(0xFF331111));
+        g.fillRect(clipArea);
+
+        float barH = juce::jmax(1.0f, (inner.getHeight() - 1.0f) * 0.5f);
+        auto topBar = inner.removeFromTop(barH);
+        inner.removeFromTop(1.0f);
+        auto bottomBar = inner;
+
+        auto drawChannel = [&](juce::Rectangle<float> rect, float peakVal)
+        {
+            g.setColour(juce::Colour(0xFF181818));
+            g.fillRect(rect);
+
+            // Logarithmic dBFS mapping (-50 dB to 0 dB)
+            float db = juce::Decibels::gainToDecibels(peakVal, -50.0f);
+            float norm = juce::jlimit(0.0f, 1.0f, (db + 50.0f) / 50.0f);
+            if (norm <= 0.01f) return;
+
+            float w = rect.getWidth() * norm;
+            auto fillRect = rect.removeFromLeft(w);
+
+            juce::ColourGradient grad(juce::Colour(0xFF00E676), rect.getX(), rect.getY(),
+                                       juce::Colour(0xFFFF3333), rect.getRight(), rect.getY(), false);
+            grad.addColour(0.70, juce::Colour(0xFFFFD600));
+            grad.addColour(0.90, juce::Colour(0xFFFF6D00));
+            g.setGradientFill(grad);
+            g.fillRect(fillRect);
+        };
+
+        drawChannel(topBar, currentL);
+        drawChannel(bottomBar, currentR);
+    }
+
+private:
+    WaveSlaveAudioProcessor& processor;
+    float currentL = 0.0f;
+    float currentR = 0.0f;
+    int clipHoldCounter = 0;
+};
 
 //==============================================================================
 // A single partial strip component (self-contained card with drag pad)
@@ -102,8 +238,8 @@ public:
     static constexpr int expandedCardHeight = 630;
     static constexpr int minimizedCardHeight = 82;
 
-    PartialStrip(int index, juce::AudioProcessorValueTreeState& apvts)
-        : partialIndex(index)
+    PartialStrip(int index, juce::AudioProcessorValueTreeState& apvts, std::atomic<bool>* soloStateArray = nullptr)
+        : partialIndex(index), soloStates(soloStateArray)
     {
         juce::String idSuffix = juce::String(index + 1);
 
@@ -134,17 +270,47 @@ public:
             setMinimized(!isMinimized);
         };
 
+        soloButton.setButtonText("S");
+        soloButton.setClickingTogglesState(true);
+        soloButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF222222));
+        soloButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xFFFF9900));
+        soloButton.setColour(juce::TextButton::textColourOnId, juce::Colour(0xFF000000));
+        soloButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFF888888));
+        soloButton.setTooltip("Solo Partial (Alt+Click on ON also toggles solo)");
+        addAndMakeVisible(soloButton);
+        soloButton.onClick = [this]()
+        {
+            if (soloStates != nullptr)
+            {
+                bool s = soloButton.getToggleState();
+                soloStates[partialIndex].store(s, std::memory_order_relaxed);
+                if (onSoloChanged) onSoloChanged(partialIndex);
+            }
+        };
+
         enableButton.setButtonText("ON");
         enableButton.setClickingTogglesState(true);
         enableButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF222222));
         enableButton.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xFF444444));
         enableButton.setColour(juce::TextButton::textColourOnId, juce::Colour(0xFFFFFFFF));
         enableButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFF666666));
-        enableButton.setTooltip("Enable / Disable Partial");
+        enableButton.setTooltip("Enable / Disable Partial (Alt+Click to Solo)");
         addAndMakeVisible(enableButton);
         enableAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(apvts, "P_ENABLED" + idSuffix, enableButton);
         enableButton.onClick = [this]()
         {
+            if (juce::ModifierKeys::getCurrentModifiers().isAltDown())
+            {
+                enableButton.setToggleState(!enableButton.getToggleState(), juce::dontSendNotification);
+                if (soloStates != nullptr)
+                {
+                    bool cur = soloStates[partialIndex].load(std::memory_order_relaxed);
+                    soloStates[partialIndex].store(!cur, std::memory_order_relaxed);
+                    soloButton.setToggleState(!cur, juce::dontSendNotification);
+                    if (onSoloChanged) onSoloChanged(partialIndex);
+                }
+                return;
+            }
             bool on = enableButton.getToggleState();
             enableButton.setButtonText(on ? "ON" : "OFF");
             updateChildVisibility();
@@ -164,17 +330,28 @@ public:
         ratioAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(apvts, "RATIO" + idSuffix, ratioSlider.slider);
         ratioSlider.slider.onValueChange = [this]()
         {
-            if (ratioSlider.slider.isMouseButtonDown() && onParamEditedByUser)
+            if ((ratioSlider.slider.isMouseButtonDown() || ratioSlider.slider.hasKeyboardFocus(true)) && onParamEditedByUser)
                 onParamEditedByUser(partialIndex);
         };
 
         addAndMakeVisible(semitoneSlider);
         semitoneSlider.slider.setDoubleClickReturnValue(true, 0.0);
         semitoneSlider.slider.setTooltip("Coarse Semitone Tuning (-24 to +24 semitones)");
+        semitoneSlider.setTextBoxWidth(40, 16);
+        semitoneSlider.slider.textFromValueFunction = [](double val)
+        {
+            int s = (int)std::round(val);
+            if (s > 0) return "+" + juce::String(s);
+            return juce::String(s);
+        };
+        semitoneSlider.slider.valueFromTextFunction = [](const juce::String& text)
+        {
+            return (double)text.trimCharactersAtStart("+").getDoubleValue();
+        };
         semitoneAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(apvts, "SEMITONE" + idSuffix, semitoneSlider.slider);
         semitoneSlider.slider.onValueChange = [this]()
         {
-            if (semitoneSlider.slider.isMouseButtonDown() && onParamEditedByUser)
+            if ((semitoneSlider.slider.isMouseButtonDown() || semitoneSlider.slider.hasKeyboardFocus(true)) && onParamEditedByUser)
                 onParamEditedByUser(partialIndex);
         };
 
@@ -182,7 +359,7 @@ public:
         gainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(apvts, "GAIN" + idSuffix, gainSlider.slider);
         gainSlider.slider.onValueChange = [this]()
         {
-            if (gainSlider.slider.isMouseButtonDown() && onParamEditedByUser)
+            if ((gainSlider.slider.isMouseButtonDown() || gainSlider.slider.hasKeyboardFocus(true)) && onParamEditedByUser)
                 onParamEditedByUser(partialIndex);
         };
 
@@ -191,7 +368,7 @@ public:
         panAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(apvts, "PAN" + idSuffix, panSlider.slider);
         panSlider.slider.onValueChange = [this]()
         {
-            if (panSlider.slider.isMouseButtonDown() && onParamEditedByUser)
+            if ((panSlider.slider.isMouseButtonDown() || panSlider.slider.hasKeyboardFocus(true)) && onParamEditedByUser)
                 onParamEditedByUser(partialIndex);
         };
 
@@ -409,7 +586,7 @@ public:
         if (!enableButton.getToggleState()) return 32; // Compact bar when partial is disabled
         if (isMinimized) return minimizedCardHeight;   // 82px when collapsed
 
-        int h = 160; // Header (20) + gap (4) + waveform (24) + gap (6) + 4 slider rows (4*22 + 4*4 = 104) + padding
+        int h = 164; // Header (20 + 4 top offset) + gap (4) + waveform (24) + gap (6) + 4 slider rows (4*22 + 4*4 = 104) + padding
         if (showAdsr)
         {
             if (pAdsrEnableBtn.getToggleState())
@@ -428,7 +605,7 @@ public:
 
         if (showDynMod)
         {
-            h += 24; // Compact row for KEYFRAME label and ON/OFF button (no dropdowns)
+            h += 26; // Compact row for KEYFRAME label and ON/OFF button (no dropdowns)
         }
 
         return h;
@@ -488,6 +665,9 @@ public:
         bool enabled = enableButton.getToggleState();
         enableButton.setButtonText(enabled ? "ON" : "OFF");
 
+        if (soloStates != nullptr)
+            soloButton.setToggleState(soloStates[partialIndex].load(std::memory_order_relaxed), juce::dontSendNotification);
+
         bool adsrOn = pAdsrEnableBtn.getToggleState();
         pAdsrEnableBtn.setButtonText(adsrOn ? "ON" : "OFF");
 
@@ -510,7 +690,21 @@ public:
         auto col = getPartialColour(partialIndex);
         bool enabled = enableButton.getToggleState();
 
-        if (!enabled)
+        bool anySolo = false;
+        if (soloStates != nullptr)
+        {
+            for (int i = 0; i < 16; ++i)
+            {
+                if (soloStates[i].load(std::memory_order_relaxed))
+                {
+                    anySolo = true;
+                    break;
+                }
+            }
+        }
+        bool isSolo = soloStates != nullptr && soloStates[partialIndex].load(std::memory_order_relaxed);
+
+        if (!enabled || (anySolo && !isSolo))
         {
             g.setColour(juce::Colour(0xFF101010));
             g.fillRoundedRectangle(bounds, 6.0f);
@@ -518,7 +712,7 @@ public:
             g.drawRoundedRectangle(bounds, 6.0f, 1.0f);
 
             // Dimmed top accent bar
-            g.setColour(col.withAlpha(0.25f));
+            g.setColour(col.withAlpha(0.20f));
             g.fillRoundedRectangle(bounds.getX() + 6.0f, bounds.getY() + 3.0f, bounds.getWidth() - 12.0f, 2.0f, 1.0f);
             return;
         }
@@ -526,7 +720,12 @@ public:
         g.setColour(isSelected ? juce::Colour(0xFF252525) : juce::Colour(0xFF151515));
         g.fillRoundedRectangle(bounds, 6.0f);
 
-        if (isSelected)
+        if (isSolo)
+        {
+            g.setColour(juce::Colour(0xFFFF9900));
+            g.drawRoundedRectangle(bounds, 6.0f, 2.0f);
+        }
+        else if (isSelected)
         {
             g.setColour(col);
             g.drawRoundedRectangle(bounds, 6.0f, 2.0f);
@@ -551,11 +750,15 @@ public:
     {
         auto area = getLocalBounds().reduced(6);
 
-        // Header: "H1", enable button ("ON"/"OFF"), and minimize button ("-"/"+")
+        // Header: "H1", enable button ("ON"/"OFF"), solo button ("S"), and minimize button ("-"/"+")
+        area.removeFromTop(4); // clear the 3px accent bar and roundings
         auto headerRow = area.removeFromTop(20);
+        headerRow.removeFromRight(3);
         minButton.setBounds(headerRow.removeFromRight(18));
         headerRow.removeFromRight(4);
-        enableButton.setBounds(headerRow.removeFromRight(36));
+        soloButton.setBounds(headerRow.removeFromRight(20));
+        headerRow.removeFromRight(4);
+        enableButton.setBounds(headerRow.removeFromRight(34));
         headerRow.removeFromRight(4);
         headerLabel.setBounds(headerRow);
         area.removeFromTop(4);
@@ -648,7 +851,7 @@ public:
         if (showDynMod)
         {
             // Keyframe Animation: Compact header with ON/OFF button (no dropdowns)
-            auto dynHeader = area.removeFromTop(18);
+            auto dynHeader = area.removeFromTop(22);
             pDynModEnableBtn.setBounds(dynHeader.removeFromRight(34).reduced(0, 1));
             dynHeader.removeFromRight(4);
             dynModLabel.setBounds(dynHeader);
@@ -660,6 +863,7 @@ public:
     std::function<void()> onLayoutChanged;
     std::function<void(int)> onParamEditedByUser;
     std::function<void(int)> onEnsureKeyframes;
+    std::function<void(int)> onSoloChanged;
 
 private:
     int partialIndex;
@@ -671,7 +875,9 @@ private:
 
     juce::Label headerLabel;
     juce::TextButton enableButton;
+    juce::TextButton soloButton;
     juce::TextButton minButton;
+    std::atomic<bool>* soloStates = nullptr;
     juce::ComboBox waveformBox;
     LabeledSlider ratioSlider    { "Ratio", false, 44 };
     LabeledSlider gainSlider     { "Level", false, 44 };
@@ -740,13 +946,17 @@ public:
     static constexpr int stripCardHeight = 380;
     static constexpr int stripCardMinHeight = 82;
 
-    void initPartials(juce::AudioProcessorValueTreeState& apvts, int count, std::function<void(int)> onSelect)
+    void initPartials(juce::AudioProcessorValueTreeState& apvts, std::atomic<bool>* soloStates, int count, std::function<void(int)> onSelect)
     {
         onSelectPartial = onSelect;
         for (int i = 0; i < count; ++i)
         {
-            auto* strip = new PartialStrip(i, apvts);
+            auto* strip = new PartialStrip(i, apvts, soloStates);
             strip->onSelected = onSelect;
+            strip->onSoloChanged = [this](int)
+            {
+                refreshAllStrips();
+            };
             strip->onParamEditedByUser = [this](int idx)
             {
                 if (onParamEditedByUser) onParamEditedByUser(idx);
@@ -781,6 +991,10 @@ public:
                 return;
             }
         }
+
+        // Clicked on empty space inside the container
+        setSelectedPartial(-1);
+        if (onSelectPartial) onSelectPartial(-1);
     }
 
     void setMinimizeAll(bool min)
@@ -869,7 +1083,8 @@ public:
         lastAvailableWidth = availableWidth;
 
         int totalH = calculateTotalHeight(availableWidth);
-        setSize(availableWidth, totalH);
+        int minH = getParentComponent() ? getParentComponent()->getHeight() : totalH;
+        setSize(availableWidth, juce::jmax(totalH, minH));
         resized();
     }
 
@@ -1073,6 +1288,7 @@ public:
         setupPanelBtn(voicePanelBtn,  "VOICE",   "View Master Voice & Portamento Settings", false);
         setupPanelBtn(envPanelBtn,    "ENV",     "View Master ADSR Envelope Settings", true);
         setupPanelBtn(filterPanelBtn, "FLTR",    "View Master Low Pass & High Pass Filters", false);
+        setupPanelBtn(fxPanelBtn,     "FX",      "View Master Effects (Chorus, Delay, Reverb)", false);
 
         voicePanelBtn.onClick = [this]()
         {
@@ -1090,6 +1306,12 @@ public:
         {
             setMasterPanelState(MasterPanel::Filters);
             if (onSelectMasterPanel) onSelectMasterPanel(MasterPanel::Filters);
+        };
+
+        fxPanelBtn.onClick = [this]()
+        {
+            setMasterPanelState(MasterPanel::FX);
+            if (onSelectMasterPanel) onSelectMasterPanel(MasterPanel::FX);
         };
 
         // --- PERFORM ---
@@ -1130,13 +1352,14 @@ public:
         scopeButton.setToggleState(scopeOpen, juce::dontSendNotification);
     }
 
-    enum class MasterPanel { Envelope, Voice, Filters };
+    enum class MasterPanel { Envelope, Voice, Filters, FX };
 
     void setMasterPanelState(MasterPanel panel)
     {
         voicePanelBtn.setToggleState(panel == MasterPanel::Voice, juce::dontSendNotification);
         envPanelBtn.setToggleState(panel == MasterPanel::Envelope, juce::dontSendNotification);
         filterPanelBtn.setToggleState(panel == MasterPanel::Filters, juce::dontSendNotification);
+        fxPanelBtn.setToggleState(panel == MasterPanel::FX, juce::dontSendNotification);
     }
 
     void setMinAllState(bool min)
@@ -1185,6 +1408,8 @@ public:
         envPanelBtn.setBounds(area.removeFromTop(20));
         area.removeFromTop(3);
         filterPanelBtn.setBounds(area.removeFromTop(20));
+        area.removeFromTop(3);
+        fxPanelBtn.setBounds(area.removeFromTop(20));
 
         // --- PERFORM ---
         area.removeFromTop(7);
@@ -1256,6 +1481,7 @@ private:
     juce::TextButton voicePanelBtn;
     juce::TextButton envPanelBtn;
     juce::TextButton filterPanelBtn;
+    juce::TextButton fxPanelBtn;
 
     juce::Label performLabel;
     juce::ToggleButton velToggle;
@@ -1340,6 +1566,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseDown(const juce::MouseEvent&) override;
 
     void setNumPartials(int newCount);
     void updatePartialsLayout(int count);
@@ -1347,11 +1574,15 @@ public:
     void applyBulkHarmonicSeries(int seriesType);
     void applyBulkGainTilt(int tiltType);
     void applyBulkSemitones(int semitoneValue);
+    void applyBulkSemitoneShift(int delta);
     void applyBulkPan(int panType);
     void applyBulkVoiceMode(int mode);
     void applyBulkModTarget(int targetIndex);
     void applyBulkModWaveform(int waveIndex);
     void applyBulkModDepth(float depthValue);
+    // Generic per-partial setter: fn maps the 1-based partial index to a real (unnormalised) value
+    void applyBulkParam(const juce::String& paramPrefix, const std::function<float(int)>& fn);
+    void applyBulkPartialAdsr(int preset);
     void resetAllPartials();
     void copyAllPartials();
     void pasteAllPartials();
@@ -1371,17 +1602,86 @@ public:
 
     void updateVoiceDesc();
     void updateFilterButtonsText();
+    void updateFxButtonsText();
     void saveProfile();
     void loadProfile();
+    void saveUserPreset();
+    void openPresetsFolder();
+    void refreshPresetList();
 
 private:
     WaveSlaveAudioProcessor& audioProcessor;
     WaveSlaveLookAndFeel customLookAndFeel;
 
     juce::ComboBox fileMenuBox;
-    juce::ComboBox editMenuBox;    // Combined Edit & Bulk transformations in header
+    // ComboBox whose popup is organised into compact categorised sub-menus
+    struct MultiColumnComboBox : public juce::ComboBox
+    {
+        int numColumns = 4;
+
+        void showPopup() override
+        {
+            // Turn each section heading into a sub-menu so the popup stays small
+            juce::PopupMenu root;
+            juce::PopupMenu current;
+            juce::String currentName;
+
+            auto flush = [&]()
+            {
+                if (currentName.isNotEmpty())
+                    root.addSubMenu(currentName, current);
+                current = juce::PopupMenu();
+            };
+
+            juce::PopupMenu::MenuItemIterator iter(*getRootMenu());
+            while (iter.next())
+            {
+                auto& item = iter.getItem();
+                if (item.isSectionHeader)
+                {
+                    flush();
+                    currentName = item.text;
+                }
+                else if (item.itemID != 0)
+                {
+                    if (currentName.isEmpty())
+                        root.addItem(item.itemID, item.text);
+                    else
+                        current.addItem(item.itemID, item.text);
+                }
+            }
+            flush();
+
+            auto& lf = getLookAndFeel();
+            root.setLookAndFeel(&lf);
+
+            auto options = juce::PopupMenu::Options()
+                               .withTargetComponent(this)
+                               .withMinimumWidth(getWidth());
+
+            juce::Component::SafePointer<MultiColumnComboBox> safeThis(this);
+            root.showMenuAsync(options, [safeThis](int result)
+            {
+                if (safeThis == nullptr)
+                    return;
+
+                safeThis->hidePopup();
+
+                if (result != 0)
+                {
+                    // Reset first so re-selecting the same entry still fires onChange
+                    safeThis->setSelectedId(0, juce::dontSendNotification);
+                    safeThis->setSelectedId(result, juce::sendNotification);
+                }
+            });
+        }
+    };
+
+    MultiColumnComboBox editMenuBox;    // Combined Edit & Bulk transformations in header
     std::unique_ptr<juce::FileChooser> fileChooser;
     bool isApplyingPreset = false;
+    std::vector<juce::File> userPresetFiles;
+    int currentPresetId = 1;
 
     struct PartialSnapshot
     {
@@ -1405,11 +1705,14 @@ private:
     Spectrograph spectrograph;
     KeyframeTimeline timelineDock { spectrograph };
 
-    // Master Gain & Pan horizontal sliders
+    // Master Gain & Pan horizontal sliders & Peak Meter
     LabeledSlider masterGainSlider { "Master", false };
     LabeledSlider masterPanSlider { "Pan", false };
+    StereoPeakMeter peakMeter { audioProcessor };
 
-    // Factory Presets
+    // Factory Presets & Prev/Next buttons
+    juce::TextButton prevPresetBtn { "<" };
+    juce::TextButton nextPresetBtn { ">" };
     juce::ComboBox factoryPresetBox;
     ReloadButton regenerateButton;
     juce::ComboBox partialsComboBox;
@@ -1426,27 +1729,71 @@ private:
     juce::TextButton lpfEnableButton;
     LabeledSlider lpfCutoffSlider { "Cutoff", false };
     LabeledSlider lpfResoSlider   { "Reso", false };
+    LabeledSlider lpfEnvSlider    { "Env", false };
 
     juce::Label hpfSectionLabel;
     juce::TextButton hpfEnableButton;
     LabeledSlider hpfCutoffSlider { "Cutoff", false };
     LabeledSlider hpfResoSlider   { "Reso", false };
+    LabeledSlider hpfEnvSlider    { "Env", false };
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lpfEnableAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lpfCutoffAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lpfResoAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lpfEnvAttachment;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> hpfEnableAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> hpfCutoffAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> hpfResoAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> hpfEnvAttachment;
 
     // Master Voice Settings UI
     juce::Label voiceSectionLabel;
+    juce::Label voiceModeLabel;
     juce::ComboBox masterVoiceBox;
     LabeledSlider masterGlideSlider { "Glide", false };
     juce::Label voiceModeDescLabel;
+    juce::Label phaseModeLabel;
+    juce::ComboBox phaseModeBox;
+    juce::Label pitchBendLabel;
+    juce::ComboBox pitchBendBox;
+    juce::ToggleButton masterClipperToggle { "Soft Limiter" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> masterVoiceAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> masterGlideAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> phaseModeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> pitchBendAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> masterClipperAttachment;
+
+    // Master FX UI (Chorus, Ping-Pong Delay, Reverb)
+    juce::Label chorusLabel;
+    juce::TextButton chorusEnableBtn;
+    LabeledSlider chorusRateSlider  { "Rate", false };
+    LabeledSlider chorusDepthSlider { "Depth", false };
+    LabeledSlider chorusMixSlider   { "Mix", false };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> chorusEnableAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> chorusRateAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> chorusDepthAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> chorusMixAttachment;
+
+    juce::Label delayLabel;
+    juce::TextButton delayEnableBtn;
+    LabeledSlider delayTimeSlider     { "Time", false };
+    LabeledSlider delayFeedbackSlider { "Fdbk", false };
+    LabeledSlider delayMixSlider      { "Mix", false };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> delayEnableAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> delayTimeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> delayFeedbackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> delayMixAttachment;
+
+    juce::Label reverbLabel;
+    juce::TextButton reverbEnableBtn;
+    LabeledSlider reverbSizeSlider { "Size", false };
+    LabeledSlider reverbDampSlider { "Damp", false };
+    LabeledSlider reverbMixSlider  { "Mix", false };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> reverbEnableAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> reverbSizeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> reverbDampAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> reverbMixAttachment;
 
     SideBarTool::MasterPanel currentMasterPanel = SideBarTool::MasterPanel::Envelope;
 

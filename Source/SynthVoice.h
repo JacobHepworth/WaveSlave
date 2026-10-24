@@ -109,6 +109,48 @@ struct LivePartialVisState
     std::atomic<float> lfoValue          { 0.0f };
 };
 
+struct VoiceCachedParams
+{
+    std::atomic<float>* attack = nullptr;
+    std::atomic<float>* decay = nullptr;
+    std::atomic<float>* sustain = nullptr;
+    std::atomic<float>* release = nullptr;
+    std::atomic<float>* numPartials = nullptr;
+    std::atomic<float>* masterPan = nullptr;
+    std::atomic<float>* voiceMode = nullptr;
+    std::atomic<float>* glideTime = nullptr;
+    std::atomic<float>* velocityEnabled = nullptr;
+    std::atomic<float>* phaseMode = nullptr;
+    std::atomic<float>* pitchBendRange = nullptr;
+
+    struct PartialCachedParams
+    {
+        std::atomic<float>* enabled = nullptr;
+        std::atomic<float>* waveform = nullptr;
+        std::atomic<float>* ratio = nullptr;
+        std::atomic<float>* semitone = nullptr;
+        std::atomic<float>* detune = nullptr;
+        std::atomic<float>* gain = nullptr;
+        std::atomic<float>* pan = nullptr;
+        std::atomic<float>* modTarget = nullptr;
+        std::atomic<float>* modWaveform = nullptr;
+        std::atomic<float>* modRate = nullptr;
+        std::atomic<float>* modDepth = nullptr;
+        std::atomic<float>* modPhase = nullptr;
+        std::atomic<float>* adsrEnabled = nullptr;
+        std::atomic<float>* attack = nullptr;
+        std::atomic<float>* decay = nullptr;
+        std::atomic<float>* sustain = nullptr;
+        std::atomic<float>* release = nullptr;
+        std::atomic<float>* glide = nullptr;
+        std::atomic<float>* animMode = nullptr;
+        std::atomic<float>* animCurve = nullptr;
+        std::atomic<float>* animDuration = nullptr;
+        std::atomic<float>* animDepth = nullptr;
+    };
+    std::array<PartialCachedParams, 16> partials;
+};
+
 class WaveSlaveSound : public juce::SynthesiserSound
 {
 public:
@@ -119,9 +161,37 @@ public:
 class BandlimitedOscillator
 {
 public:
+    BandlimitedOscillator()
+    {
+        setRandomSeed(123456789);
+    }
+
+    void setRandomSeed(uint32_t seed)
+    {
+        rngState = (seed != 0) ? seed : 123456789;
+    }
+
+    inline float nextRandomFloat()
+    {
+        // Thread-safe, lock-free XorShift32 PRNG (zero mutex, zero heap allocations)
+        rngState ^= rngState << 13;
+        rngState ^= rngState >> 17;
+        rngState ^= rngState << 5;
+        return (float)rngState * 2.3283064365386963e-10f * 2.0f - 1.0f; // [-1.0f, 1.0f]
+    }
+
     void setFrequency(float freq, float sr)
     {
-        phaseInc = freq / sr;
+        if (sr <= 0.0f || freq <= 0.0f || freq >= 0.49f * sr)
+        {
+            gainMuted = true;
+            phaseInc = 0.0f;
+        }
+        else
+        {
+            gainMuted = false;
+            phaseInc = freq / sr;
+        }
     }
 
     void setWaveform(int type)
@@ -131,8 +201,24 @@ public:
 
     void reset() { phase = 0.0f; }
 
+    void setPhase(float p)
+    {
+        phase = std::fmod(p, 1.0f);
+        if (phase < 0.0f) phase += 1.0f;
+    }
+
+    float getPhase() const { return phase; }
+
     float processSample()
     {
+        if (gainMuted || phaseInc <= 0.0f)
+        {
+            phase += phaseInc;
+            if (phase >= 1.0f)
+                phase -= std::floor(phase);
+            return 0.0f;
+        }
+
         float t = phase;
         float dt = phaseInc;
         float out = 0.0f;
@@ -164,8 +250,8 @@ public:
                 out = (std::exp(1.924847f * t) - 3.927f) / 2.927f;
                 out -= polyBlep(t, dt);
                 break;
-            case 7: // Noise
-                out = ((float)std::rand() / RAND_MAX) * 2.0f - 1.0f;
+            case 7: // Noise (Lock-free XorShift32)
+                out = nextRandomFloat();
                 break;
             case 8:  // Custom 1
             case 9:  // Custom 2
@@ -189,7 +275,11 @@ public:
         }
 
         phase += phaseInc;
-        if (phase >= 1.0f) phase -= 1.0f;
+        if (phase >= 1.0f)
+            phase -= std::floor(phase);
+        else if (phase < 0.0f)
+            phase = std::fmod(phase, 1.0f) + 1.0f;
+
         return out;
     }
 
@@ -201,6 +291,8 @@ public:
 private:
     float phase = 0.0f;
     float phaseInc = 0.0f;
+    bool gainMuted = false;
+    uint32_t rngState = 123456789;
     int waveform = 0;
     std::array<std::array<std::atomic<float>, 512>, 4>* customWavetables = nullptr;
 
@@ -229,6 +321,7 @@ public:
     void controllerMoved (int controllerNumber, int newControllerValue) override;
     void renderNextBlock (juce::AudioBuffer<float>& outputBuffer, int startSample, int numSamples) override;
     void prepareToPlay(double sampleRate, int samplesPerBlock, int outputChannels);
+    void cacheParameters(juce::AudioProcessorValueTreeState& apvts);
     void updateParameters(juce::AudioProcessorValueTreeState& apvts, const std::array<PartialAnimationData, 16>* animTracks = nullptr);
     void setPartialVisualizerBuffer(juce::AudioBuffer<float>* buffer) { partialsVisBuffer = buffer; }
     void setCustomWavetables(std::array<std::array<std::atomic<float>, 512>, 4>* tables);
@@ -237,8 +330,12 @@ public:
         liveVisStates = states;
         latestActiveVoiceIdx = latestVoiceIdx;
     }
+    void setSoloStatePointer(const std::array<std::atomic<bool>, 16>* soloStates)
+    {
+        partialSoloStates = soloStates;
+    }
     void setTargetNote(int midiNoteNumber, float velocity, bool isLegatoTransition);
-    void setVoiceIndex(int idx) { voiceIndex = idx; }
+    void setVoiceIndex(int idx);
     bool isActive() const { return adsr.isActive(); }
     float getCurrentEnvLevel() const { return currentEnvLevel.load(std::memory_order_relaxed); }
 
@@ -248,6 +345,9 @@ private:
     std::array<std::array<std::atomic<float>, 512>, 4>* customWavetables = nullptr;
     std::array<LivePartialVisState, 16>* liveVisStates = nullptr;
     std::atomic<int>* latestActiveVoiceIdx = nullptr;
+    const std::array<std::atomic<bool>, 16>* partialSoloStates = nullptr;
+    VoiceCachedParams cachedParams;
+    bool paramsCached = false;
     juce::ADSR adsr;
     juce::ADSR::Parameters adsrParams;
     
@@ -279,7 +379,7 @@ private:
     juce::ADSR partialAdsr[maxPartials];
     juce::ADSR::Parameters partialAdsrParams[maxPartials];
     float partialGlideTimes[maxPartials];
-    float partialCurrentFreq[maxPartials];
+    float partialCurrentPitch[maxPartials]; // MIDI note number
 
     // Per-Partial Keyframe Animation (replaces Mod 2)
     int partialAnimModes[maxPartials];      // 0=Off, 1=Note Length (ADSR), 2=Time: One-Shot, 3=Time: Loop, 4=Time: Ping-Pong
@@ -299,9 +399,8 @@ private:
     float masterPan = 0.0f;
     int voiceMode = 0; // 0=Poly, 1=Mono, 2=Legato
     float glideTime = 0.0f;
-    float targetFrequency = 0.0f;
+    float targetPitch = 60.0f; // MIDI note number
     
-    float currentFrequency = 0.0f;
     juce::AudioBuffer<float> synthBuffer;
     juce::AudioBuffer<float>* partialsVisBuffer = nullptr;
 };

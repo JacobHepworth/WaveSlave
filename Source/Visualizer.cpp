@@ -39,6 +39,18 @@ Oscilloscope::Oscilloscope(WaveSlaveAudioProcessor& p) : processor(p)
     };
     addAndMakeVisible(polarBtn);
 
+    freezeBtn.setClickingTogglesState(true);
+    freezeBtn.setToggleState(false, juce::dontSendNotification);
+    freezeBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF444444));
+    freezeBtn.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xFF007ACC));
+    freezeBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white.withAlpha(0.5f));
+    freezeBtn.setColour(juce::TextButton::textColourOnId, juce::Colour(0xFFFFFFFF));
+    freezeBtn.setTooltip("Freeze / Hold Oscilloscope waveform display");
+    freezeBtn.onClick = [this]() {
+        isFrozen = freezeBtn.getToggleState();
+    };
+    addAndMakeVisible(freezeBtn);
+
     drawBtn.setClickingTogglesState(true);
     drawBtn.setToggleState(false, juce::dontSendNotification);
     drawBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF444444));
@@ -51,6 +63,7 @@ Oscilloscope::Oscilloscope(WaveSlaveAudioProcessor& p) : processor(p)
         bezierToggle.setVisible(isDrawMode);
         slotSelector.setVisible(isDrawMode);
         clearBtn.setVisible(isDrawMode);
+        loadWavBtn.setVisible(isDrawMode);
         repaint();
     };
     addAndMakeVisible(drawBtn);
@@ -80,6 +93,24 @@ Oscilloscope::Oscilloscope(WaveSlaveAudioProcessor& p) : processor(p)
     bezierToggle.onClick = [this]() { repaint(); };
     addChildComponent(bezierToggle); // hidden until DRAW mode
 
+    loadWavBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF333333));
+    loadWavBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    loadWavBtn.setTooltip("Load single-cycle .wav file into current custom wavetable slot");
+    loadWavBtn.onClick = [this]() {
+        fileChooser = std::make_unique<juce::FileChooser>(
+            "Load Single-Cycle Audio File",
+            juce::File::getSpecialLocation(juce::File::userMusicDirectory),
+            "*.wav;*.aif;*.aiff");
+
+        auto flags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
+        fileChooser->launchAsync(flags, [this](const juce::FileChooser& fc) {
+            auto file = fc.getResult();
+            if (file.existsAsFile())
+                loadWavFile(file);
+        });
+    };
+    addChildComponent(loadWavBtn); // hidden until DRAW mode
+
     clearBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF333333));
     clearBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
     clearBtn.onClick = [this]() {
@@ -94,26 +125,92 @@ Oscilloscope::~Oscilloscope()
 {
 }
 
+bool Oscilloscope::isInterestedInFileDrag(const juce::StringArray& files)
+{
+    for (const auto& f : files)
+    {
+        if (f.endsWithIgnoreCase(".wav") || f.endsWithIgnoreCase(".aif") || f.endsWithIgnoreCase(".aiff"))
+            return true;
+    }
+    return false;
+}
+
+void Oscilloscope::filesDropped(const juce::StringArray& files, int /*x*/, int /*y*/)
+{
+    for (const auto& f : files)
+    {
+        if (f.endsWithIgnoreCase(".wav") || f.endsWithIgnoreCase(".aif") || f.endsWithIgnoreCase(".aiff"))
+        {
+            loadWavFile(juce::File(f));
+            break;
+        }
+    }
+}
+
+void Oscilloscope::loadWavFile(const juce::File& file)
+{
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader(fm.createReaderFor(file));
+    if (reader != nullptr && reader->lengthInSamples > 0)
+    {
+        int numSamples = (int)reader->lengthInSamples;
+        juce::AudioBuffer<float> tempBuffer(1, numSamples);
+        reader->read(&tempBuffer, 0, numSamples, 0, true, false);
+
+        float maxAmp = 0.0001f;
+        std::array<float, 512> newSamples {};
+
+        for (int i = 0; i < 512; ++i)
+        {
+            float pos = ((float)i / 512.0f) * (float)numSamples;
+            int idx0 = (int)pos % numSamples;
+            int idx1 = (idx0 + 1) % numSamples;
+            float frac = pos - (int)pos;
+
+            float s0 = tempBuffer.getSample(0, idx0);
+            float s1 = tempBuffer.getSample(0, idx1);
+            float val = s0 + frac * (s1 - s0);
+
+            newSamples[i] = val;
+            maxAmp = juce::jmax(maxAmp, std::abs(val));
+        }
+
+        for (int i = 0; i < 512; ++i)
+        {
+            float normVal = newSamples[i] / maxAmp;
+            processor.customWavetables[currentSlot][i].store(normVal, std::memory_order_relaxed);
+        }
+
+        slotSplinePoints[currentSlot].clear();
+        processor.customSplinePoints[currentSlot].clear();
+        repaint();
+    }
+}
+
 void Oscilloscope::resized()
 {
     int btnH = 18;
     int btnY = getHeight() - btnH - 4;
     int spacing = 4;
     int totalBtnW = getWidth() - 16;
-    int btnW = (totalBtnW - 2 * spacing) / 3;
+    int btnW = (totalBtnW - 3 * spacing) / 4;
     drawBtn.setBounds(8, btnY, btnW, btnH);
-    polarBtn.setBounds(8 + btnW + spacing, btnY, btnW, btnH);
-    overlayBtn.setBounds(8 + 2 * (btnW + spacing), btnY, totalBtnW - 2 * (btnW + spacing), btnH);
+    polarBtn.setBounds(8 + (btnW + spacing), btnY, btnW, btnH);
+    freezeBtn.setBounds(8 + 2 * (btnW + spacing), btnY, btnW, btnH);
+    overlayBtn.setBounds(8 + 3 * (btnW + spacing), btnY, totalBtnW - 3 * (btnW + spacing), btnH);
 
     // Top controls when DRAW mode is active (strict non-overlapping bounds)
     int topY = 4;
     int topH = 18;
     int slotW = 72;
+    int wavW = 32;
     int clearW = 32;
-    int smoothW = juce::jmax(54, getWidth() - 16 - slotW - clearW - 8);
+    int smoothW = juce::jmax(50, getWidth() - 16 - slotW - wavW - clearW - 12);
     slotSelector.setBounds(8, topY, slotW, topH);
     bezierToggle.setBounds(8 + slotW + 4, topY, smoothW, topH);
-    clearBtn.setBounds(8 + slotW + 4 + smoothW + 4, topY, clearW, topH);
+    loadWavBtn.setBounds(8 + slotW + 4 + smoothW + 4, topY, wavW, topH);
+    clearBtn.setBounds(8 + slotW + 4 + smoothW + 4 + wavW + 4, topY, clearW, topH);
 }
 
 void Oscilloscope::paint(juce::Graphics& g)
@@ -519,6 +616,9 @@ void Oscilloscope::mouseUp(const juce::MouseEvent& e)   { drawOnWavetable(e, fal
 
 void Oscilloscope::timerCallback()
 {
+    if (!isShowing() || isFrozen)
+        return;
+
     if (isDrawMode)
     {
         for (int i = 0; i < 512; ++i)
@@ -651,11 +751,21 @@ Spectrograph::Spectrograph(WaveSlaveAudioProcessor& p)
     lockBtn.setColour(juce::TextButton::textColourOnId, juce::Colour(0xFFFFFFFF));
     lockBtn.setTooltip("Lock Nodes: Freeze node movement from live audio/modulation while allowing keyframe editing");
     lockBtn.onClick = [this]() {
-        isLocked = lockBtn.getToggleState();
-        lockBtn.setButtonText(isLocked ? "LOCKED" : "LOCK");
-        repaint();
+        setNodesLocked(lockBtn.getToggleState());
     };
     addAndMakeVisible(lockBtn);
+
+    freezeBtn.setClickingTogglesState(true);
+    freezeBtn.setToggleState(false, juce::dontSendNotification);
+    freezeBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF333333));
+    freezeBtn.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xFF007ACC));
+    freezeBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white.withAlpha(0.6f));
+    freezeBtn.setColour(juce::TextButton::textColourOnId, juce::Colour(0xFFFFFFFF));
+    freezeBtn.setTooltip("Freeze / Hold Visualizer frame");
+    freezeBtn.onClick = [this]() {
+        isFrozen = freezeBtn.getToggleState();
+    };
+    addAndMakeVisible(freezeBtn);
 
     buildWaterfallLut();
 
@@ -667,7 +777,7 @@ Spectrograph::Spectrograph(WaveSlaveAudioProcessor& p)
     animEnableBtn.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFF777777));
     animEnableBtn.setTooltip("Enable / Disable Keyframe Animation for Selected Partial");
     animEnableBtn.onClick = [this]() {
-        if (isSyncingTimelineControls) return;
+        if (isSyncingTimelineControls || selectedPartial < 0) return;
         juce::String s = juce::String(selectedPartial + 1);
         bool turnOn = animEnableBtn.getToggleState();
         if (turnOn)
@@ -689,6 +799,7 @@ Spectrograph::Spectrograph(WaveSlaveAudioProcessor& p)
     addKfBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
     addKfBtn.setTooltip("Insert or Update Keyframe at Current Playhead Time");
     addKfBtn.onClick = [this]() {
+        if (selectedPartial < 0) return;
         juce::String s = juce::String(selectedPartial + 1);
         PartialAnimationData track = processor.getPartialAnimation(selectedPartial);
         PartialKeyframe baseKf = processor.getPartialBaseSettings(selectedPartial);
@@ -733,6 +844,7 @@ Spectrograph::Spectrograph(WaveSlaveAudioProcessor& p)
     delKfBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white.withAlpha(0.85f));
     delKfBtn.setTooltip("Delete Selected Keyframe (or right-click diamond on timeline)");
     delKfBtn.onClick = [this]() {
+        if (selectedPartial < 0) return;
         PartialAnimationData track = processor.getPartialAnimation(selectedPartial);
         int targetIdx = selectedKeyframeIndex;
         if (targetIdx < 0 || targetIdx >= track.numKeyframes)
@@ -760,12 +872,25 @@ Spectrograph::Spectrograph(WaveSlaveAudioProcessor& p)
     clearKfBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
     clearKfBtn.setTooltip("Clear All Keyframes for Selected Partial");
     clearKfBtn.onClick = [this]() {
+        if (selectedPartial < 0) return;
         processor.clearKeyframes(selectedPartial);
         selectedKeyframeIndex = -1;
         repaint();
         repaintTimeline();
     };
     addAndMakeVisible(clearKfBtn);
+
+    timelineLockBtn.setClickingTogglesState(true);
+    timelineLockBtn.setToggleState(false, juce::dontSendNotification);
+    timelineLockBtn.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF282828));
+    timelineLockBtn.setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xFF444444));
+    timelineLockBtn.setColour(juce::TextButton::textColourOffId, juce::Colours::white.withAlpha(0.6f));
+    timelineLockBtn.setColour(juce::TextButton::textColourOnId, juce::Colour(0xFFFFFFFF));
+    timelineLockBtn.setTooltip("Lock Nodes: Freeze node movement from live audio/modulation while allowing keyframe editing");
+    timelineLockBtn.onClick = [this]() {
+        setNodesLocked(timelineLockBtn.getToggleState());
+    };
+    addAndMakeVisible(timelineLockBtn);
 
     timelinePartialBox.setScrollWheelEnabled(false);
     timelinePartialBox.setTooltip("Select Active Partial");
@@ -788,7 +913,7 @@ Spectrograph::Spectrograph(WaveSlaveAudioProcessor& p)
         int numActive = 16;
         if (auto* np = processor.apvts.getRawParameterValue("NUM_PARTIALS"))
             numActive = juce::jlimit(1, 16, (int)np->load());
-        int prev = (selectedPartial - 1 + numActive) % numActive;
+        int prev = (selectedPartial <= 0) ? (numActive - 1) : (selectedPartial - 1);
         setSelectedPartial(prev);
         if (onPartialSelected) onPartialSelected(prev);
     };
@@ -801,7 +926,7 @@ Spectrograph::Spectrograph(WaveSlaveAudioProcessor& p)
         int numActive = 16;
         if (auto* np = processor.apvts.getRawParameterValue("NUM_PARTIALS"))
             numActive = juce::jlimit(1, 16, (int)np->load());
-        int next = (selectedPartial + 1) % numActive;
+        int next = (selectedPartial < 0 || selectedPartial >= numActive - 1) ? 0 : (selectedPartial + 1);
         setSelectedPartial(next);
         if (onPartialSelected) onPartialSelected(next);
     };
@@ -811,7 +936,7 @@ Spectrograph::Spectrograph(WaveSlaveAudioProcessor& p)
     animModeBox.addItemList({ "Off", "Note Length", "Time: One-Shot", "Time: Loop", "Time: Ping-Pong" }, 1);
     animModeBox.setTooltip("Keyframe Mode: Note Length (relative to played note ADSR) or Time-Based (uses Duration)");
     animModeBox.onChange = [this]() {
-        if (isSyncingTimelineControls) return;
+        if (isSyncingTimelineControls || selectedPartial < 0) return;
         int mode = animModeBox.getSelectedId() - 1;
         if (mode < 0) return;
         if (mode > 0)
@@ -834,7 +959,7 @@ Spectrograph::Spectrograph(WaveSlaveAudioProcessor& p)
     animCurveBox.addItemList({ "Smooth", "Linear", "Step" }, 1);
     animCurveBox.setTooltip("Keyframe Interpolation Curve Type");
     animCurveBox.onChange = [this]() {
-        if (isSyncingTimelineControls) return;
+        if (isSyncingTimelineControls || selectedPartial < 0) return;
         int curve = animCurveBox.getSelectedId() - 1;
         if (curve < 0) return;
         juce::String s = juce::String(selectedPartial + 1);
@@ -857,11 +982,13 @@ Spectrograph::Spectrograph(WaveSlaveAudioProcessor& p)
     animDurSlider.setTextValueSuffix("s");
     animDurSlider.setTooltip("Keyframe Animation Cycle Duration (seconds, used in Time modes)");
     animDurSlider.onValueChange = [this]() {
-        if (isSyncingTimelineControls) return;
+        if (isSyncingTimelineControls || selectedPartial < 0) return;
         juce::String s = juce::String(selectedPartial + 1);
         if (auto* p = processor.apvts.getParameter("ANIM_DURATION" + s))
         {
+            p->beginChangeGesture();
             p->setValueNotifyingHost(p->convertTo0to1((float)animDurSlider.getValue()));
+            p->endChangeGesture();
         }
         repaint();
         repaintTimeline();
@@ -919,7 +1046,10 @@ void Spectrograph::setNodesLocked(bool locked)
     isLocked = locked;
     lockBtn.setToggleState(locked, juce::dontSendNotification);
     lockBtn.setButtonText(locked ? "LOCKED" : "LOCK");
+    timelineLockBtn.setToggleState(locked, juce::dontSendNotification);
+    timelineLockBtn.setButtonText(locked ? "LOCKED" : "LOCK");
     repaint();
+    repaintTimeline();
 }
 
 void Spectrograph::setTimelineComponent(juce::Component* comp)
@@ -933,6 +1063,7 @@ void Spectrograph::setTimelineComponent(juce::Component* comp)
     parent->addAndMakeVisible(addKfBtn);
     parent->addAndMakeVisible(delKfBtn);
     parent->addAndMakeVisible(clearKfBtn);
+    parent->addAndMakeVisible(timelineLockBtn);
     parent->addAndMakeVisible(animModeBox);
     parent->addAndMakeVisible(animCurveBox);
     parent->addAndMakeVisible(animDurSlider);
@@ -999,7 +1130,11 @@ float Spectrograph::getEffectiveTimelineInfo(int partialIdx, int& outMode, float
 
 void Spectrograph::setSelectedPartial(int index)
 {
-    index = juce::jlimit(0, 15, index);
+    if (index >= 0)
+        index = juce::jlimit(0, 15, index);
+    else
+        index = -1;
+
     if (selectedPartial != index)
     {
         selectedPartial = index;
@@ -1030,6 +1165,40 @@ void Spectrograph::syncTimelineControlsToSelectedPartial()
 {
     isSyncingTimelineControls = true;
     updateTimelinePartialBoxItems();
+
+    if (selectedPartial < 0)
+    {
+        timelinePartialBox.setSelectedId(0, juce::dontSendNotification);
+        timelinePartialBox.setText("None", juce::dontSendNotification);
+        timelinePartialBox.setColour(juce::ComboBox::outlineColourId, juce::Colour(0xFF333333));
+        timelinePartialBox.setColour(juce::ComboBox::arrowColourId, juce::Colour(0xFF777777));
+        animEnableBtn.setEnabled(false);
+        animEnableBtn.setToggleState(false, juce::dontSendNotification);
+        animEnableBtn.setButtonText("OFF");
+        animModeBox.setEnabled(false);
+        animModeBox.setSelectedId(0, juce::dontSendNotification);
+        animCurveBox.setEnabled(false);
+        animCurveBox.setSelectedId(0, juce::dontSendNotification);
+        animDurSlider.setEnabled(false);
+        addKfBtn.setEnabled(false);
+        delKfBtn.setEnabled(false);
+        clearKfBtn.setEnabled(false);
+        isSyncingTimelineControls = false;
+        if (timelineHost != nullptr)
+            layoutKeyframeTimeline(timelineHost->getLocalBounds());
+        resized();
+        repaintTimeline();
+        return;
+    }
+
+    animEnableBtn.setEnabled(true);
+    animModeBox.setEnabled(true);
+    animCurveBox.setEnabled(true);
+    animDurSlider.setEnabled(true);
+    addKfBtn.setEnabled(true);
+    delKfBtn.setEnabled(true);
+    clearKfBtn.setEnabled(true);
+
     timelinePartialBox.setSelectedId(selectedPartial + 1, juce::dontSendNotification);
     auto col = getPartialColour(selectedPartial);
     timelinePartialBox.setColour(juce::ComboBox::outlineColourId, col);
@@ -1082,16 +1251,31 @@ void Spectrograph::syncSlidersToPlayhead(int partialIdx)
         curve = (int)p->load();
 
     PartialKeyframe evalKf = track.evaluate(scrubTimeNorm, curve, track.keyframes[0]);
-    if (auto* rp = processor.apvts.getParameter("RATIO" + s))
+    if (auto* rp = processor.apvts.getParameter("RATIO" + s)) {
+        rp->beginChangeGesture();
         rp->setValueNotifyingHost(rp->convertTo0to1(evalKf.ratio));
-    if (auto* gp = processor.apvts.getParameter("GAIN" + s))
+        rp->endChangeGesture();
+    }
+    if (auto* gp = processor.apvts.getParameter("GAIN" + s)) {
+        gp->beginChangeGesture();
         gp->setValueNotifyingHost(gp->convertTo0to1(evalKf.gain));
-    if (auto* sp = processor.apvts.getParameter("SEMITONE" + s))
+        gp->endChangeGesture();
+    }
+    if (auto* sp = processor.apvts.getParameter("SEMITONE" + s)) {
+        sp->beginChangeGesture();
         sp->setValueNotifyingHost(sp->convertTo0to1(evalKf.semitone));
-    if (auto* dp = processor.apvts.getParameter("DETUNE" + s))
+        sp->endChangeGesture();
+    }
+    if (auto* dp = processor.apvts.getParameter("DETUNE" + s)) {
+        dp->beginChangeGesture();
         dp->setValueNotifyingHost(dp->convertTo0to1(evalKf.detune));
-    if (auto* pp = processor.apvts.getParameter("PAN" + s))
+        dp->endChangeGesture();
+    }
+    if (auto* pp = processor.apvts.getParameter("PAN" + s)) {
+        pp->beginChangeGesture();
         pp->setValueNotifyingHost(pp->convertTo0to1(evalKf.pan));
+        pp->endChangeGesture();
+    }
 }
 
 void Spectrograph::recordKeyframeFromSliders(int partialIndex)
@@ -1160,19 +1344,22 @@ juce::Rectangle<float> Spectrograph::getTimelineTrackBounds() const
     if (timelineHost != nullptr)
     {
         auto tlArea = timelineHost->getLocalBounds().toFloat();
-        return { tlArea.getX() + 6.0f, tlArea.getY() + 24.0f, juce::jmax(40.0f, tlArea.getWidth() - 12.0f), juce::jmax(24.0f, tlArea.getHeight() - 28.0f) };
+        return { tlArea.getX() + 6.0f, tlArea.getY() + 27.0f, juce::jmax(40.0f, tlArea.getWidth() - 12.0f), juce::jmax(24.0f, tlArea.getHeight() - 31.0f) };
     }
     auto inner = getLocalBounds().toFloat().reduced(12.0f);
     float timelineTop = inner.getBottom() - 64.0f;
-    return { inner.getX() + 6.0f, timelineTop + 24.0f, juce::jmax(40.0f, inner.getWidth() - 12.0f), 36.0f };
+    return { inner.getX() + 6.0f, timelineTop + 27.0f, juce::jmax(40.0f, inner.getWidth() - 12.0f), 36.0f };
 }
 
 void Spectrograph::layoutKeyframeTimeline(juce::Rectangle<int> bounds)
 {
     bool showTl = isTimelineOpen;
     int selMode = 0;
-    if (auto* p = processor.apvts.getRawParameterValue("ANIM_MODE" + juce::String(selectedPartial + 1)))
-        selMode = (int)p->load();
+    if (selectedPartial >= 0)
+    {
+        if (auto* p = processor.apvts.getRawParameterValue("ANIM_MODE" + juce::String(selectedPartial + 1)))
+            selMode = (int)p->load();
+    }
     bool showDurSlider = showTl && (selMode >= 2); // Only show time Duration slider in Time-based modes
 
     timelinePrevBtn.setVisible(showTl);
@@ -1182,6 +1369,7 @@ void Spectrograph::layoutKeyframeTimeline(juce::Rectangle<int> bounds)
     addKfBtn.setVisible(showTl);
     delKfBtn.setVisible(showTl);
     clearKfBtn.setVisible(showTl);
+    timelineLockBtn.setVisible(showTl);
     animModeBox.setVisible(showTl);
     animCurveBox.setVisible(showTl);
     animDurSlider.setVisible(showDurSlider);
@@ -1189,8 +1377,8 @@ void Spectrograph::layoutKeyframeTimeline(juce::Rectangle<int> bounds)
     if (!showTl)
         return;
 
-    int tlY = bounds.getY() + 4;
-    int rowH = 18;
+    int tlY = bounds.getY() + 3;
+    int rowH = 22;
 
     // Top Right of Timeline Pane: ON/OFF Button and Mode/Curve/Duration dropdowns
     int rightEdge = bounds.getRight() - 6;
@@ -1210,7 +1398,7 @@ void Spectrograph::layoutKeyframeTimeline(juce::Rectangle<int> bounds)
 
     if (showDurSlider)
     {
-        int durW = juce::jlimit(65, 100, rightEdge - (int)(bounds.getX() + 270));
+        int durW = juce::jlimit(65, 100, rightEdge - (int)(bounds.getX() + 320));
         if (durW > 50)
         {
             animDurSlider.setBounds(rightEdge - durW, tlY, durW, rowH);
@@ -1218,7 +1406,7 @@ void Spectrograph::layoutKeyframeTimeline(juce::Rectangle<int> bounds)
         }
     }
 
-    // Top Left of Timeline Pane: Title, Partial selector (< H# >), Keyframe add/del/clear buttons
+    // Top Left of Timeline Pane: Title, Partial selector (< H# >), Keyframe add/del/clear buttons, and Lock button
     int curX = bounds.getX() + 66; // Space for "TIMELINE" title
 
     timelinePrevBtn.setBounds(curX, tlY, 18, rowH);
@@ -1230,7 +1418,10 @@ void Spectrograph::layoutKeyframeTimeline(juce::Rectangle<int> bounds)
 
     addKfBtn.setBounds(curX, tlY, 32, rowH);   curX += 35;
     delKfBtn.setBounds(curX, tlY, 32, rowH);   curX += 35;
-    clearKfBtn.setBounds(curX, tlY, 32, rowH); curX += 35;
+    clearKfBtn.setBounds(curX, tlY, 32, rowH); curX += 38;
+
+    int lockW = 46;
+    timelineLockBtn.setBounds(curX, tlY, lockW, rowH);
 }
 
 float Spectrograph::getEffectiveBaseFreq() const
@@ -1274,6 +1465,7 @@ void Spectrograph::resized()
     }
 
     showNodesBtn.setVisible(true);
+    freezeBtn.setVisible(true);
     lockBtn.setVisible(true);
     slideBtn.setVisible(true);
     fullBtn.setVisible(true);
@@ -1284,12 +1476,16 @@ void Spectrograph::resized()
     int btnH = 20;
 
     int showNodesW = 52;
+    int freezeW    = 52;
     int lockW      = 48;
     int fullW      = 44;
     int slideW     = 52;
 
     showNodesBtn.setBounds(right - showNodesW, topY, showNodesW, btnH);
     right -= (showNodesW + 4);
+
+    freezeBtn.setBounds(right - freezeW, topY, freezeW, btnH);
+    right -= (freezeW + 4);
 
     lockBtn.setBounds(right - lockW, topY, lockW, btnH);
     right -= (lockW + 8);
@@ -1508,11 +1704,15 @@ juce::Colour Spectrograph::waterfallColour(float level) const
     return waterfallLut[(size_t)idx];
 }
 
-// Push one new row of FFT data into the waterfall image and write the pixel line
-void Spectrograph::paintWaterfall(juce::Graphics& g, float left, float top, float width, float height)
+// Push one new row of FFT data into the waterfall image and advance write pointer (called from timerCallback)
+void Spectrograph::updateWaterfallRow()
 {
-    int imgW = juce::jmax(1, (int)width);
-    int imgH = juce::jmax(1, (int)height);
+    if (!isWaterfallMode)
+        return;
+
+    auto plotBounds = getGraphPlotBounds();
+    int imgW = juce::jmax(1, (int)plotBounds.getWidth());
+    int imgH = juce::jmax(1, (int)plotBounds.getHeight());
 
     // Allocate / resize image lazily
     if (waterfallImage.getWidth()  != imgW ||
@@ -1526,29 +1726,36 @@ void Spectrograph::paintWaterfall(juce::Graphics& g, float left, float top, floa
     }
 
     // Write new frequency row at waterfallLineY (top-down scroll)
+    if ((int)waterfallHistory.size() == imgH * scopeSize)
     {
-        if ((int)waterfallHistory.size() == imgH * scopeSize)
-        {
-            float* row = &waterfallHistory[(size_t)(waterfallLineY * scopeSize)];
-            for (int i = 0; i < scopeSize; ++i)
-                row[i] = scopeData[i];
-        }
-
-        juce::Image::BitmapData bmd(waterfallImage,
-                                    juce::Image::BitmapData::readWrite);
-        int y = waterfallLineY;
-        for (int x = 0; x < imgW; ++x)
-        {
-            float normX = (float)x / (float)(imgW - 1);
-            // Map imgW pixels -> scopeSize bins
-            int bin = juce::jlimit(0, scopeSize - 1,
-                                   (int)(normX * (float)(scopeSize - 1)));
-            float level = scopeData[bin];
-            auto col = waterfallColour(level);
-            bmd.setPixelColour(x, y, col);
-        }
-        waterfallLineY = (waterfallLineY + 1) % imgH;
+        float* row = &waterfallHistory[(size_t)(waterfallLineY * scopeSize)];
+        for (int i = 0; i < scopeSize; ++i)
+            row[i] = scopeData[i];
     }
+
+    juce::Image::BitmapData bmd(waterfallImage, juce::Image::BitmapData::readWrite);
+    int y = waterfallLineY;
+    for (int x = 0; x < imgW; ++x)
+    {
+        float normX = (float)x / (float)(imgW - 1);
+        int bin = juce::jlimit(0, scopeSize - 1, (int)(normX * (float)(scopeSize - 1)));
+        float level = scopeData[bin];
+        auto col = waterfallColour(level);
+        bmd.setPixelColour(x, y, col);
+    }
+    waterfallLineY = (waterfallLineY + 1) % imgH;
+}
+
+// Paint waterfall - strictly read-only display
+void Spectrograph::paintWaterfall(juce::Graphics& g, float left, float top, float width, float height)
+{
+    if (!waterfallImage.isValid())
+        return;
+
+    int imgW = waterfallImage.getWidth();
+    int imgH = waterfallImage.getHeight();
+    if (imgW <= 0 || imgH <= 0)
+        return;
 
     // Draw the image split at waterfallLineY so it appears as continuous scroll
     // Upper portion: rows waterfallLineY..imgH-1  -> drawn at the top of the display area
@@ -1992,13 +2199,22 @@ void Spectrograph::paintKeyframeTimeline(juce::Graphics& g, juce::Rectangle<floa
     // Panel Title on top-left
     g.setColour(juce::Colours::white);
     g.setFont(juce::Font(11.0f, juce::Font::bold));
-    g.drawText("TIMELINE", (int)timelineArea.getX() + 8, (int)timelineArea.getY() + 4, 58, 18, juce::Justification::centredLeft);
+    g.drawText("TIMELINE", (int)timelineArea.getX() + 8, (int)timelineArea.getY() + 3, 58, 22, juce::Justification::centredLeft);
 
     auto trackRect = getTimelineTrackBounds();
     g.setColour(juce::Colour(0xFF09090E));
     g.fillRoundedRectangle(trackRect, 4.0f);
     g.setColour(juce::Colour(0xFF282834));
     g.drawRoundedRectangle(trackRect, 4.0f, 1.0f);
+
+    if (selectedPartial < 0)
+    {
+        g.setColour(juce::Colours::white.withAlpha(0.35f));
+        g.setFont(9.5f);
+        g.drawText("No partial selected - Click a harmonic node or strip to edit keyframes",
+                   trackRect.toNearestInt(), juce::Justification::centred);
+        return;
+    }
 
     juce::String s = juce::String(selectedPartial + 1);
     int animMode = 0;
@@ -2097,7 +2313,8 @@ void Spectrograph::paintKeyframeTimeline(juce::Graphics& g, juce::Rectangle<floa
             PartialKeyframe eval = track.evaluate(t, animCurve, startKf);
 
             float normPrimary   = juce::jlimit(0.0f, 1.0f, eval.gain);
-            float normSecondary = rp ? rp->convertTo0to1(juce::jlimit(0.01f, 32.0f, eval.ratio)) : 0.5f;
+            float effRatio      = juce::jlimit(0.01f, 32.0f, eval.ratio * std::pow(2.0f, eval.semitone / 12.0f));
+            float normSecondary = rp ? rp->convertTo0to1(effRatio) : 0.5f;
 
             float x = trackRect.getX() + t * trackRect.getWidth();
             float y1 = trackRect.getBottom() - 3.0f - normPrimary * (trackRect.getHeight() - 6.0f);
@@ -2603,7 +2820,7 @@ void Spectrograph::paint(juce::Graphics& g)
                 hudText += " | " + juce::String(c.modSemi > 0 ? "+" : "") + juce::String((int)std::round(c.modSemi)) + "st";
 
             if (draggedPartial >= 0)
-                hudText += " [EDIT]";
+                hudText += (isDraggingSemitone ? " [SEMI]" : " [EDIT]");
 
             int hudWidth = 248;
             int hudHeight = 20;
@@ -2676,10 +2893,68 @@ void Spectrograph::paint(juce::Graphics& g)
     else
         subStr = isFull
             ? (isLocked ? "Fixed 20Hz - 20kHz scale | Nodes locked (keyframing active)"
-                        : "Fixed 20Hz - 20kHz scale | Live harmonic tracking")
+                        : "Fixed 20Hz - 20kHz scale | Drag: Ratio & Gain - Alt: Snap - Ctrl: Semi")
             : (isLocked ? "Sliding harmonic scale | Nodes locked (keyframing active)"
                         : "Sliding harmonic scale | Drag: Ratio & Gain - Alt: Snap - Ctrl: Semi");
     g.drawText(subStr, (int)left, 18, maxTitleW, 12, juce::Justification::centredLeft);
+
+    // Spectrograph Cursor HUD (Frequency & Note Readout)
+    if (isMouseHovering && !isDraggingSemitone && draggedPartial < 0)
+    {
+        auto plotBounds = getGraphPlotBounds();
+        if (plotBounds.contains(mouseHoverPos))
+        {
+            float pLeft = plotBounds.getX();
+            float pTop = plotBounds.getY();
+            float pWidth = plotBounds.getWidth();
+            float pHeight = plotBounds.getHeight();
+
+            float freq = 0.0f;
+            float bFreq = getEffectiveBaseFreq();
+
+            if (scaleMode == SpectrumScaleMode::Full)
+            {
+                float normStatic = juce::jlimit(0.0f, 1.0f, (mouseHoverPos.x - pLeft) / pWidth);
+                freq = 20.0f * std::pow(20000.0f / 20.0f, normStatic);
+            }
+            else
+            {
+                float normX = juce::jlimit(0.0f, 1.0f, (mouseHoverPos.x - pLeft) / pWidth);
+                if (auto* rp = processor.apvts.getParameter("RATIO1"))
+                {
+                    float r = rp->convertFrom0to1(normX);
+                    freq = bFreq * r;
+                }
+                else
+                {
+                    freq = bFreq * (0.01f + std::pow(normX, 2.5f) * 31.99f);
+                }
+            }
+
+            float normY = juce::jlimit(0.0f, 1.0f, ((pTop + pHeight) - mouseHoverPos.y) / pHeight);
+            float db = (normY > 0.0001f) ? juce::Decibels::gainToDecibels(normY) : -96.0f;
+
+            float midiFloat = 69.0f + 12.0f * std::log2(juce::jmax(8.0f, freq) / 440.0f);
+            int midiNote = juce::jlimit(0, 127, (int)std::round(midiFloat));
+            juce::String noteName = juce::MidiMessage::getMidiNoteName(midiNote, true, true, 4);
+
+            juce::String hudText = juce::String(freq, 1) + " Hz (" + noteName + ") | " + juce::String(db, 1) + " dB";
+
+            int textW = 165;
+            int textH = 20;
+            float hx = juce::jlimit(pLeft + 4.0f, pLeft + pWidth - textW - 4.0f, mouseHoverPos.x + 12.0f);
+            float hy = juce::jlimit(pTop + 4.0f, pTop + pHeight - textH - 4.0f, mouseHoverPos.y - 24.0f);
+
+            g.setColour(juce::Colour(0xEE121212));
+            g.fillRoundedRectangle(hx, hy, (float)textW, (float)textH, 4.0f);
+            g.setColour(juce::Colour(0x66FFFFFF));
+            g.drawRoundedRectangle(hx, hy, (float)textW, (float)textH, 4.0f, 1.0f);
+
+            g.setColour(juce::Colours::white);
+            g.setFont(juce::Font(10.5f, juce::Font::bold));
+            g.drawText(hudText, (int)hx, (int)hy, textW, textH, juce::Justification::centred);
+        }
+    }
 }
 
 int Spectrograph::findPartialAt(float mouseX, float mouseY)
@@ -2791,6 +3066,7 @@ void Spectrograph::handleTimelineMouseMove(const juce::MouseEvent& e)
 
 void Spectrograph::handleTimelineMouseDown(const juce::MouseEvent& e)
 {
+    if (selectedPartial < 0) return;
     auto trackRect = getTimelineTrackBounds();
     if (trackRect.expanded(6.0f, 6.0f).contains(e.position))
     {
@@ -2869,6 +3145,9 @@ void Spectrograph::handleTimelineMouseDoubleClick(const juce::MouseEvent& e)
 
 void Spectrograph::mouseMove(const juce::MouseEvent& e)
 {
+    mouseHoverPos = e.position;
+    isMouseHovering = true;
+
     if (isWaterfallMode)
     {
         auto plotBounds = getGraphPlotBounds();
@@ -2883,11 +3162,12 @@ void Spectrograph::mouseMove(const juce::MouseEvent& e)
             e.position.y >= top && e.position.y <= top + height)
         {
             setMouseCursor(juce::MouseCursor::PointingHandCursor);
+            repaint();
             return;
         }
     }
 
-    if (isReadOnly) return;
+    if (isReadOnly) { repaint(); return; }
 
     int hit = findPartialAt(e.position.x, e.position.y);
     if (hit != hoveredPartial)
@@ -2897,19 +3177,20 @@ void Spectrograph::mouseMove(const juce::MouseEvent& e)
             setMouseCursor(juce::MouseCursor::DraggingHandCursor);
         else
             setMouseCursor(juce::MouseCursor::NormalCursor);
-        repaint();
     }
+    repaint();
 }
 
 void Spectrograph::mouseExit(const juce::MouseEvent&)
 {
     setMouseCursor(juce::MouseCursor::NormalCursor);
-    if (isReadOnly) return;
+    isMouseHovering = false;
+    if (isReadOnly) { repaint(); return; }
     if (hoveredPartial != -1)
     {
         hoveredPartial = -1;
-        repaint();
     }
+    repaint();
 }
 
 void Spectrograph::mouseDown(const juce::MouseEvent& e)
@@ -3014,11 +3295,20 @@ void Spectrograph::mouseDown(const juce::MouseEvent& e)
         PartialKeyframe baseKf = processor.getPartialBaseSettings(hit);
         const PartialKeyframe& fallbackKf = (track.numKeyframes > 0) ? track.keyframes[0] : baseKf;
         initialDragKeyframe = (track.numKeyframes > 0) ? track.evaluate(scrubTimeNorm, curve, fallbackKf) : baseKf;
+        initialSemitone = initialDragKeyframe.semitone;
+        isDraggingSemitone = (e.mods.isCommandDown() || e.mods.isCtrlDown());
 
         if (onPartialSelected)
             onPartialSelected(hit);
         repaint();
         repaintTimeline();
+    }
+    else
+    {
+        // Clicked on empty space of the graph: deselect partial
+        setSelectedPartial(-1);
+        if (onPartialSelected)
+            onPartialSelected(-1);
     }
 }
 
@@ -3054,7 +3344,8 @@ void Spectrograph::mouseDrag(const juce::MouseEvent& e)
     // Keyframe at playhead when timeline is open and paused; otherwise shift existing keyframes (or update dragged waypoint diamond)
     bool shouldUpdateKfAtPlayhead = (animMode > 0) && isTimelineOpen;
 
-    if (e.mods.isCommandDown() || e.mods.isCtrlDown())
+    isDraggingSemitone = (e.mods.isCommandDown() || e.mods.isCtrlDown());
+    if (isDraggingSemitone)
     {
         // Ctrl/Cmd: Semitone offset
         float deltaY = dragStartMouse.y - e.position.y;
@@ -3121,7 +3412,11 @@ void Spectrograph::mouseDrag(const juce::MouseEvent& e)
         if (auto* adp = processor.apvts.getParameter("ANIM_DEPTH" + idSuffix))
         {
             if (adp->convertFrom0to1(adp->getValue()) < 0.99f)
+            {
+                adp->beginChangeGesture();
                 adp->setValueNotifyingHost(adp->convertTo0to1(1.0f));
+                adp->endChangeGesture();
+            }
         }
     }
     else if (animMode > 0 && draggedWaypointKeyframe >= 0 && draggedWaypointKeyframe < track.numKeyframes)
@@ -3165,6 +3460,7 @@ void Spectrograph::mouseUp(const juce::MouseEvent&)
     isScrubbingTimeline = false;
     draggedKeyframeIndex = -1;
     draggedWaypointKeyframe = -1;
+    isDraggingSemitone = false;
 
     if (isReadOnly) return;
     if (draggedPartial >= 0)
@@ -3201,16 +3497,32 @@ void Spectrograph::mouseDoubleClick(const juce::MouseEvent& e)
     {
         auto idSuffix = juce::String(hit + 1);
         if (auto* rp = processor.apvts.getParameter("RATIO" + idSuffix))
+        {
+            rp->beginChangeGesture();
             rp->setValueNotifyingHost(rp->convertTo0to1((float)(hit + 1)));
+            rp->endChangeGesture();
+        }
 
         if (auto* gp = processor.apvts.getParameter("GAIN" + idSuffix))
+        {
+            gp->beginChangeGesture();
             gp->setValueNotifyingHost(gp->convertTo0to1(hit <= 3 ? 1.0f / (float)(hit + 1) : 0.0f));
+            gp->endChangeGesture();
+        }
 
         if (auto* dp = processor.apvts.getParameter("DETUNE" + idSuffix))
+        {
+            dp->beginChangeGesture();
             dp->setValueNotifyingHost(dp->convertTo0to1(0.0f));
+            dp->endChangeGesture();
+        }
 
         if (auto* sp = processor.apvts.getParameter("SEMITONE" + idSuffix))
+        {
+            sp->beginChangeGesture();
             sp->setValueNotifyingHost(sp->convertTo0to1(0.0f));
+            sp->endChangeGesture();
+        }
 
         recordKeyframeFromSliders(hit);
         repaint();
@@ -3220,6 +3532,9 @@ void Spectrograph::mouseDoubleClick(const juce::MouseEvent& e)
 
 void Spectrograph::timerCallback()
 {
+    if (!isShowing() || isFrozen)
+        return;
+
     juce::uint32 nowMs = juce::Time::getMillisecondCounter();
     float dt = (lastTimerMs > 0) ? juce::jlimit(0.001f, 0.1f, (float)(nowMs - lastTimerMs) * 0.001f) : 0.02f;
     lastTimerMs = nowMs;
@@ -3385,6 +3700,7 @@ void Spectrograph::timerCallback()
 
     drawNextFrameOfSpectrum();
     updateWaterfallDots();
+    updateWaterfallRow();
     repaint();
     repaintTimeline();
 }

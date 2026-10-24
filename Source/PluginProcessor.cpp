@@ -15,8 +15,10 @@ WaveSlaveAudioProcessor::WaveSlaveAudioProcessor()
 #else
     :
 #endif
-    apvts (*this, nullptr, "Parameters", createParameterLayout())
+    apvts (*this, &undoManager, "Parameters", createParameterLayout())
 {
+    formatManager.registerBasicFormats();
+
     synth.addSound(new WaveSlaveSound());
     for (int i = 0; i < 8; i++) // 8 voices of polyphony
     {
@@ -24,6 +26,7 @@ WaveSlaveAudioProcessor::WaveSlaveAudioProcessor()
         voice->setVoiceIndex(i);
         voice->setCustomWavetables(&customWavetables);
         voice->setLiveVisPointers(&livePartialState, &latestActiveVoiceIndex);
+        voice->setSoloStatePointer(&partialSoloState);
         synth.addVoice(voice);
     }
 
@@ -56,9 +59,12 @@ WaveSlaveAudioProcessor::WaveSlaveAudioProcessor()
     customSplinePoints[2] = { {0.0f, 0.0f}, {0.49f, 1.0f}, {0.51f, -1.0f}, {1.0f, 0.0f} };               // Saw
     customSplinePoints[3] = { {0.0f, 1.0f}, {0.49f, 1.0f}, {0.51f, -1.0f}, {1.0f, -1.0f} };              // Square
 
-    // Ensure filters start disabled by default
+    // Ensure filters and FX start disabled by default
     if (auto* p = apvts.getParameter("LPF_ENABLED")) p->setValueNotifyingHost(0.0f);
     if (auto* p = apvts.getParameter("HPF_ENABLED")) p->setValueNotifyingHost(0.0f);
+    if (auto* p = apvts.getParameter("CHORUS_ENABLED")) p->setValueNotifyingHost(0.0f);
+    if (auto* p = apvts.getParameter("DELAY_ENABLED")) p->setValueNotifyingHost(0.0f);
+    if (auto* p = apvts.getParameter("REVERB_ENABLED")) p->setValueNotifyingHost(0.0f);
 }
 
 void WaveSlaveAudioProcessor::generateStandardWaveToCustomTable(int slot, int waveType)
@@ -99,67 +105,114 @@ juce::AudioProcessorValueTreeState::ParameterLayout WaveSlaveAudioProcessor::cre
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
-    layout.add(std::make_unique<juce::AudioParameterFloat>("ATTACK", "Attack", juce::NormalisableRange<float>(0.001f, 5.0f, 0.001f, 0.5f), 0.01f));
-    layout.add(std::make_unique<juce::AudioParameterFloat>("DECAY", "Decay", juce::NormalisableRange<float>(0.001f, 5.0f, 0.001f, 0.5f), 0.3f));
-    layout.add(std::make_unique<juce::AudioParameterFloat>("SUSTAIN", "Sustain", juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.8f));
-    layout.add(std::make_unique<juce::AudioParameterFloat>("RELEASE", "Release", juce::NormalisableRange<float>(0.001f, 5.0f, 0.001f, 0.5f), 0.5f));
-    layout.add(std::make_unique<juce::AudioParameterFloat>("MASTER_GAIN", "Master Gain", juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.5f));
-    layout.add(std::make_unique<juce::AudioParameterFloat>("MASTER_PAN", "Master Pan", juce::NormalisableRange<float>(-1.0f, 1.0f, 0.01f), 0.0f));
-    layout.add(std::make_unique<juce::AudioParameterChoice>("VOICE_MODE", "Voice Mode", juce::StringArray{"Poly", "Mono", "Legato"}, 0));
-    layout.add(std::make_unique<juce::AudioParameterFloat>("GLIDE_TIME", "Glide Time", juce::NormalisableRange<float>(0.0f, 2.0f, 0.01f, 0.5f), 0.0f));
-    layout.add(std::make_unique<juce::AudioParameterInt>("NUM_PARTIALS", "Active Partials", 1, 16, 4));
-    layout.add(std::make_unique<juce::AudioParameterInt>("BASE_NOTE", "Base Note", 24, 96, 60)); // C1 to C7, default C4 (60)
-    layout.add(std::make_unique<juce::AudioParameterBool>("VELOCITY_ENABLED", "Velocity Sensitivity", true));
-
-    // Master Filters (Low Pass & High Pass)
-    layout.add(std::make_unique<juce::AudioParameterBool>("LPF_ENABLED", "Low Pass Filter", false));
-    layout.add(std::make_unique<juce::AudioParameterFloat>("LPF_CUTOFF", "LPF Cutoff",
-        juce::NormalisableRange<float>(20.0f, 20000.0f, 0.1f, 0.25f), 20000.0f));
-    layout.add(std::make_unique<juce::AudioParameterFloat>("LPF_RESO", "LPF Resonance",
-        juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.5f), 0.707f));
-
-    layout.add(std::make_unique<juce::AudioParameterBool>("HPF_ENABLED", "High Pass Filter", false));
-    layout.add(std::make_unique<juce::AudioParameterFloat>("HPF_CUTOFF", "HPF Cutoff",
-        juce::NormalisableRange<float>(20.0f, 20000.0f, 0.1f, 0.25f), 20.0f));
-    layout.add(std::make_unique<juce::AudioParameterFloat>("HPF_RESO", "HPF Resonance",
-        juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.5f), 0.707f));
+    // 1. Master Group
+    auto masterGroup = std::make_unique<juce::AudioProcessorParameterGroup>("group_master", "Master", "|");
+    masterGroup->addChild(std::make_unique<juce::AudioParameterFloat>("MASTER_GAIN", "Master Gain", juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.5f));
+    masterGroup->addChild(std::make_unique<juce::AudioParameterFloat>("MASTER_PAN", "Master Pan", juce::NormalisableRange<float>(-1.0f, 1.0f, 0.01f), 0.0f));
+    masterGroup->addChild(std::make_unique<juce::AudioParameterChoice>("VOICE_MODE", "Voice Mode", juce::StringArray{"Poly", "Mono", "Legato"}, 0));
+    masterGroup->addChild(std::make_unique<juce::AudioParameterFloat>("GLIDE_TIME", "Glide Time", juce::NormalisableRange<float>(0.0f, 2.0f, 0.01f, 0.5f), 0.0f));
+    masterGroup->addChild(std::make_unique<juce::AudioParameterInt>("NUM_PARTIALS", "Active Partials", 1, 16, 4));
+    masterGroup->addChild(std::make_unique<juce::AudioParameterInt>("BASE_NOTE", "Base Note", 24, 96, 60)); // C1 to C7, default C4 (60)
+    masterGroup->addChild(std::make_unique<juce::AudioParameterBool>("VELOCITY_ENABLED", "Velocity Sensitivity", true));
 
     juce::StringArray waveforms = { "Sine", "Triangle", "Saw", "Square", "Pulse", "Sharkfin", "Fibonacci", "Noise", "Custom 1", "Custom 2", "Custom 3", "Custom 4" };
-    layout.add(std::make_unique<juce::AudioParameterChoice>("BASE_WAVEFORM", "Base Waveform", waveforms, 0));
+    masterGroup->addChild(std::make_unique<juce::AudioParameterChoice>("BASE_WAVEFORM", "Base Waveform", waveforms, 0));
 
+    // Phase Mode (Key-Sync, Free-Running, Random Initial Phase)
+    masterGroup->addChild(std::make_unique<juce::AudioParameterChoice>("PHASE_MODE", "Phase Mode", juce::StringArray{"Key-Sync (0 deg)", "Free-Running", "Random"}, 0));
+
+    // Configurable Pitch Bend Range
+    masterGroup->addChild(std::make_unique<juce::AudioParameterChoice>("PITCH_BEND_RANGE", "Pitch Bend Range", juce::StringArray{"+/- 2 st", "+/- 7 st", "+/- 12 st", "+/- 24 st"}, 0));
+
+    // Master Soft Clipper
+    masterGroup->addChild(std::make_unique<juce::AudioParameterBool>("MASTER_CLIPPER", "Soft Clipper", true));
+
+    // Built-in Effects
+    // Chorus
+    masterGroup->addChild(std::make_unique<juce::AudioParameterBool>("CHORUS_ENABLED", "Chorus Enable", false));
+    masterGroup->addChild(std::make_unique<juce::AudioParameterFloat>("CHORUS_RATE", "Chorus Rate", juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.5f), 1.2f));
+    masterGroup->addChild(std::make_unique<juce::AudioParameterFloat>("CHORUS_DEPTH", "Chorus Depth", juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.35f));
+    masterGroup->addChild(std::make_unique<juce::AudioParameterFloat>("CHORUS_MIX", "Chorus Mix", juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.4f));
+
+    // Delay
+    masterGroup->addChild(std::make_unique<juce::AudioParameterBool>("DELAY_ENABLED", "Delay Enable", false));
+    masterGroup->addChild(std::make_unique<juce::AudioParameterFloat>("DELAY_TIME", "Delay Time", juce::NormalisableRange<float>(0.02f, 1.5f, 0.01f, 0.5f), 0.35f));
+    masterGroup->addChild(std::make_unique<juce::AudioParameterFloat>("DELAY_FEEDBACK", "Delay Feedback", juce::NormalisableRange<float>(0.0f, 0.95f, 0.01f), 0.45f));
+    masterGroup->addChild(std::make_unique<juce::AudioParameterFloat>("DELAY_MIX", "Delay Mix", juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.3f));
+
+    // Reverb
+    masterGroup->addChild(std::make_unique<juce::AudioParameterBool>("REVERB_ENABLED", "Reverb Enable", false));
+    masterGroup->addChild(std::make_unique<juce::AudioParameterFloat>("REVERB_SIZE", "Reverb Room Size", juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.6f));
+    masterGroup->addChild(std::make_unique<juce::AudioParameterFloat>("REVERB_DAMP", "Reverb Damping", juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.4f));
+    masterGroup->addChild(std::make_unique<juce::AudioParameterFloat>("REVERB_MIX", "Reverb Mix", juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.25f));
+
+    layout.add(std::move(masterGroup));
+
+    // 2. Master Envelope Group
+    auto envGroup = std::make_unique<juce::AudioProcessorParameterGroup>("group_envelope", "Master Envelope", "|");
+    envGroup->addChild(std::make_unique<juce::AudioParameterFloat>("ATTACK", "Attack", juce::NormalisableRange<float>(0.001f, 5.0f, 0.001f, 0.5f), 0.01f));
+    envGroup->addChild(std::make_unique<juce::AudioParameterFloat>("DECAY", "Decay", juce::NormalisableRange<float>(0.001f, 5.0f, 0.001f, 0.5f), 0.3f));
+    envGroup->addChild(std::make_unique<juce::AudioParameterFloat>("SUSTAIN", "Sustain", juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.8f));
+    envGroup->addChild(std::make_unique<juce::AudioParameterFloat>("RELEASE", "Release", juce::NormalisableRange<float>(0.001f, 5.0f, 0.001f, 0.5f), 0.5f));
+    layout.add(std::move(envGroup));
+
+    // 3. Filters Group (with Dynamic Envelope Modulation)
+    auto filterGroup = std::make_unique<juce::AudioProcessorParameterGroup>("group_filters", "Filters", "|");
+    filterGroup->addChild(std::make_unique<juce::AudioParameterBool>("LPF_ENABLED", "Low Pass Filter", false));
+    filterGroup->addChild(std::make_unique<juce::AudioParameterFloat>("LPF_CUTOFF", "LPF Cutoff",
+        juce::NormalisableRange<float>(20.0f, 20000.0f, 0.1f, 0.25f), 20000.0f));
+    filterGroup->addChild(std::make_unique<juce::AudioParameterFloat>("LPF_RESO", "LPF Resonance",
+        juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.5f), 0.707f));
+    filterGroup->addChild(std::make_unique<juce::AudioParameterFloat>("LPF_ENV_AMT", "LPF Env Amount",
+        juce::NormalisableRange<float>(-1.0f, 1.0f, 0.01f), 0.0f));
+
+    filterGroup->addChild(std::make_unique<juce::AudioParameterBool>("HPF_ENABLED", "High Pass Filter", false));
+    filterGroup->addChild(std::make_unique<juce::AudioParameterFloat>("HPF_CUTOFF", "HPF Cutoff",
+        juce::NormalisableRange<float>(20.0f, 20000.0f, 0.1f, 0.25f), 20.0f));
+    filterGroup->addChild(std::make_unique<juce::AudioParameterFloat>("HPF_RESO", "HPF Resonance",
+        juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.5f), 0.707f));
+    filterGroup->addChild(std::make_unique<juce::AudioParameterFloat>("HPF_ENV_AMT", "HPF Env Amount",
+        juce::NormalisableRange<float>(-1.0f, 1.0f, 0.01f), 0.0f));
+    layout.add(std::move(filterGroup));
+
+    // 4. Partials 1..16 Groups
     juce::StringArray modTargets = { "None", "Pitch", "Level", "Pan" };
     juce::StringArray modWaveforms = { "Sine", "Triangle", "Saw", "Square", "Custom 1", "Custom 2", "Custom 3", "Custom 4" };
 
     for (int i = 1; i <= 16; ++i)
     {
         juce::String idSuffix = juce::String(i);
-        layout.add(std::make_unique<juce::AudioParameterBool>("P_ENABLED" + idSuffix, "Enable " + idSuffix, i <= 4));
-        layout.add(std::make_unique<juce::AudioParameterChoice>("WAVEFORM" + idSuffix, "Waveform " + idSuffix, waveforms, 0));
-        layout.add(std::make_unique<juce::AudioParameterFloat>("RATIO" + idSuffix, "Harmonic " + idSuffix, juce::NormalisableRange<float>(0.01f, 32.0f, 0.01f, 0.4f), (float)i));
-        layout.add(std::make_unique<juce::AudioParameterFloat>("SEMITONE" + idSuffix, "Semitones " + idSuffix, juce::NormalisableRange<float>(-24.0f, 24.0f, 1.0f), 0.0f));
-        layout.add(std::make_unique<juce::AudioParameterFloat>("DETUNE" + idSuffix, "Detune " + idSuffix, juce::NormalisableRange<float>(-50.0f, 50.0f, 1.0f), 0.0f));
-        layout.add(std::make_unique<juce::AudioParameterFloat>("GAIN" + idSuffix, "Gain " + idSuffix, juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), i <= 4 ? 1.0f / i : 0.0f));
-        layout.add(std::make_unique<juce::AudioParameterFloat>("PAN" + idSuffix, "Pan " + idSuffix, juce::NormalisableRange<float>(-1.0f, 1.0f, 0.01f), 0.0f));
+        auto pGroup = std::make_unique<juce::AudioProcessorParameterGroup>("partial_" + idSuffix, "Partial " + idSuffix, "|");
 
-        layout.add(std::make_unique<juce::AudioParameterChoice>("MOD_TARGET" + idSuffix, "Mod Target " + idSuffix, modTargets, 0));
-        layout.add(std::make_unique<juce::AudioParameterChoice>("MOD_WAVEFORM" + idSuffix, "Mod Wave " + idSuffix, modWaveforms, 0));
-        layout.add(std::make_unique<juce::AudioParameterFloat>("MOD_RATE" + idSuffix, "Mod Rate " + idSuffix, juce::NormalisableRange<float>(0.1f, 20.0f, 0.01f, 0.3f), 2.0f));
-        layout.add(std::make_unique<juce::AudioParameterFloat>("MOD_DEPTH" + idSuffix, "Mod Depth " + idSuffix, juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.0f));
-        layout.add(std::make_unique<juce::AudioParameterFloat>("MOD_PHASE" + idSuffix, "Mod Phase " + idSuffix, juce::NormalisableRange<float>(0.0f, 360.0f, 1.0f), 0.0f));
+        pGroup->addChild(std::make_unique<juce::AudioParameterBool>("P_ENABLED" + idSuffix, "Enable " + idSuffix, i <= 4));
+        pGroup->addChild(std::make_unique<juce::AudioParameterChoice>("WAVEFORM" + idSuffix, "Waveform " + idSuffix, waveforms, 0));
+        pGroup->addChild(std::make_unique<juce::AudioParameterFloat>("RATIO" + idSuffix, "Harmonic " + idSuffix, juce::NormalisableRange<float>(0.01f, 32.0f, 0.01f, 0.4f), (float)i));
+        pGroup->addChild(std::make_unique<juce::AudioParameterFloat>("SEMITONE" + idSuffix, "Semitones " + idSuffix, juce::NormalisableRange<float>(-24.0f, 24.0f, 1.0f), 0.0f));
+        pGroup->addChild(std::make_unique<juce::AudioParameterFloat>("DETUNE" + idSuffix, "Detune " + idSuffix, juce::NormalisableRange<float>(-50.0f, 50.0f, 1.0f), 0.0f));
+        pGroup->addChild(std::make_unique<juce::AudioParameterFloat>("GAIN" + idSuffix, "Gain " + idSuffix, juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), i <= 4 ? 1.0f / i : 0.0f));
+        pGroup->addChild(std::make_unique<juce::AudioParameterFloat>("PAN" + idSuffix, "Pan " + idSuffix, juce::NormalisableRange<float>(-1.0f, 1.0f, 0.01f), 0.0f));
+
+        pGroup->addChild(std::make_unique<juce::AudioParameterChoice>("MOD_TARGET" + idSuffix, "Mod Target " + idSuffix, modTargets, 0));
+        pGroup->addChild(std::make_unique<juce::AudioParameterChoice>("MOD_WAVEFORM" + idSuffix, "Mod Wave " + idSuffix, modWaveforms, 0));
+        pGroup->addChild(std::make_unique<juce::AudioParameterFloat>("MOD_RATE" + idSuffix, "Mod Rate " + idSuffix, juce::NormalisableRange<float>(0.1f, 20.0f, 0.01f, 0.3f), 2.0f));
+        pGroup->addChild(std::make_unique<juce::AudioParameterFloat>("MOD_DEPTH" + idSuffix, "Mod Depth " + idSuffix, juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.0f));
+        pGroup->addChild(std::make_unique<juce::AudioParameterFloat>("MOD_PHASE" + idSuffix, "Mod Phase " + idSuffix, juce::NormalisableRange<float>(0.0f, 360.0f, 1.0f), 0.0f));
 
         // Per-Partial ADSR Envelope
-        layout.add(std::make_unique<juce::AudioParameterBool>("P_ADSR_ENABLED" + idSuffix, "Part " + idSuffix + " ADSR Enable", false));
-        layout.add(std::make_unique<juce::AudioParameterFloat>("P_ATTACK" + idSuffix, "Part " + idSuffix + " Attack", juce::NormalisableRange<float>(0.001f, 5.0f, 0.001f, 0.5f), 0.01f));
-        layout.add(std::make_unique<juce::AudioParameterFloat>("P_DECAY" + idSuffix, "Part " + idSuffix + " Decay", juce::NormalisableRange<float>(0.001f, 5.0f, 0.001f, 0.5f), 0.3f));
-        layout.add(std::make_unique<juce::AudioParameterFloat>("P_SUSTAIN" + idSuffix, "Part " + idSuffix + " Sustain", juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 1.0f));
-        layout.add(std::make_unique<juce::AudioParameterFloat>("P_RELEASE" + idSuffix, "Part " + idSuffix + " Release", juce::NormalisableRange<float>(0.001f, 5.0f, 0.001f, 0.5f), 0.5f));
-        layout.add(std::make_unique<juce::AudioParameterFloat>("P_GLIDE" + idSuffix, "Part " + idSuffix + " Glide", juce::NormalisableRange<float>(0.0f, 2.0f, 0.005f, 0.5f), 0.0f));
+        pGroup->addChild(std::make_unique<juce::AudioParameterBool>("P_ADSR_ENABLED" + idSuffix, "Part " + idSuffix + " ADSR Enable", false));
+        pGroup->addChild(std::make_unique<juce::AudioParameterFloat>("P_ATTACK" + idSuffix, "Part " + idSuffix + " Attack", juce::NormalisableRange<float>(0.001f, 5.0f, 0.001f, 0.5f), 0.01f));
+        pGroup->addChild(std::make_unique<juce::AudioParameterFloat>("P_DECAY" + idSuffix, "Part " + idSuffix + " Decay", juce::NormalisableRange<float>(0.001f, 5.0f, 0.001f, 0.5f), 0.3f));
+        pGroup->addChild(std::make_unique<juce::AudioParameterFloat>("P_SUSTAIN" + idSuffix, "Part " + idSuffix + " Sustain", juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 1.0f));
+        pGroup->addChild(std::make_unique<juce::AudioParameterFloat>("P_RELEASE" + idSuffix, "Part " + idSuffix + " Release", juce::NormalisableRange<float>(0.001f, 5.0f, 0.001f, 0.5f), 0.5f));
+        pGroup->addChild(std::make_unique<juce::AudioParameterFloat>("P_GLIDE" + idSuffix, "Part " + idSuffix + " Glide", juce::NormalisableRange<float>(0.0f, 2.0f, 0.005f, 0.5f), 0.0f));
 
-        // Per-Partial Keyframe Animation (replaces Mod 2)
-        layout.add(std::make_unique<juce::AudioParameterChoice>("ANIM_MODE" + idSuffix, "Anim Mode " + idSuffix, juce::StringArray{"Off", "Note Length", "Time: One-Shot", "Time: Loop", "Time: Ping-Pong"}, 0));
-        layout.add(std::make_unique<juce::AudioParameterChoice>("ANIM_CURVE" + idSuffix, "Anim Curve " + idSuffix, juce::StringArray{"Smooth", "Linear", "Step"}, 0));
-        layout.add(std::make_unique<juce::AudioParameterFloat>("ANIM_DURATION" + idSuffix, "Anim Duration " + idSuffix, juce::NormalisableRange<float>(0.05f, 16.0f, 0.01f, 0.4f), 2.0f));
-        layout.add(std::make_unique<juce::AudioParameterFloat>("ANIM_DEPTH" + idSuffix, "Anim Depth " + idSuffix, juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 1.0f));
+        // Per-Partial Keyframe Animation
+        pGroup->addChild(std::make_unique<juce::AudioParameterChoice>("ANIM_MODE" + idSuffix, "Anim Mode " + idSuffix, juce::StringArray{"Off", "Note Length", "Time: One-Shot", "Time: Loop", "Time: Ping-Pong"}, 0));
+        pGroup->addChild(std::make_unique<juce::AudioParameterChoice>("ANIM_CURVE" + idSuffix, "Anim Curve " + idSuffix, juce::StringArray{"Smooth", "Linear", "Step"}, 0));
+        pGroup->addChild(std::make_unique<juce::AudioParameterFloat>("ANIM_DURATION" + idSuffix, "Anim Duration " + idSuffix, juce::NormalisableRange<float>(0.05f, 16.0f, 0.01f, 0.4f), 2.0f));
+        pGroup->addChild(std::make_unique<juce::AudioParameterFloat>("ANIM_DEPTH" + idSuffix, "Anim Depth " + idSuffix, juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 1.0f));
+
+        layout.add(std::move(pGroup));
     }
 
     return layout;
@@ -232,6 +285,7 @@ void WaveSlaveAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBl
     {
         if (auto voice = dynamic_cast<WaveSlaveVoice*>(synth.getVoice(i)))
         {
+            voice->cacheParameters(apvts);
             voice->prepareToPlay(sampleRate, samplesPerBlock, getTotalNumOutputChannels());
         }
     }
@@ -260,6 +314,23 @@ void WaveSlaveAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBl
     highPassFilter.setType(juce::dsp::StateVariableTPTFilterType::highpass);
     highPassFilter.reset();
 
+    // Smoothed master gain de-zippering
+    smoothedMasterGain.reset(sampleRate, 0.05);
+    if (auto* mg = apvts.getRawParameterValue("MASTER_GAIN"))
+        smoothedMasterGain.setCurrentAndTargetValue(mg->load());
+
+    // Prepare Built-in Effects
+    chorusEffect.prepare(spec);
+    chorusEffect.reset();
+
+    reverbEffect.prepare(spec);
+    reverbEffect.reset();
+
+    int maxDelaySamples = (int)(sampleRate * 2.5);
+    delayBuffer.setSize(2, juce::jmax(256, maxDelaySamples));
+    delayBuffer.clear();
+    delayWritePos = 0;
+
     heldMidiNotes.clear();
 }
 
@@ -267,6 +338,10 @@ void WaveSlaveAudioProcessor::releaseResources()
 {
     lowPassFilter.reset();
     highPassFilter.reset();
+    chorusEffect.reset();
+    reverbEffect.reset();
+    delayBuffer.clear();
+    delayWritePos = 0;
     heldMidiNotes.clear();
 }
 
@@ -301,13 +376,23 @@ void WaveSlaveAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     partialVisualizerBuffer.setSize(16, buffer.getNumSamples(), false, false, true);
     partialVisualizerBuffer.clear();
 
+    // Query host BPM from AudioPlayHead if available
+    if (auto* playHead = getPlayHead())
+    {
+        if (auto pos = playHead->getPosition())
+        {
+            if (pos->getBpm().hasValue())
+                currentBpm.store((float)*pos->getBpm(), std::memory_order_relaxed);
+        }
+    }
+
     // Merge virtual QWERTY keyboard notes into the MIDI stream before processing
     midiKeyboardState.processNextMidiBuffer(midiMessages, 0, buffer.getNumSamples(), true);
 
     // Determine voice mode directly from the global VOICE_MODE parameter
     int globalVoiceMode = 0; // 0 = Poly, 1 = Mono, 2 = Legato
     if (auto* vm = apvts.getRawParameterValue("VOICE_MODE"))
-        globalVoiceMode = (int)vm->load();
+        globalVoiceMode = (int)vm->load(std::memory_order_relaxed);
 
     bool isPoly = (globalVoiceMode == 0);
     bool isLegato = (globalVoiceMode == 2);
@@ -345,7 +430,7 @@ void WaveSlaveAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 
         synth.renderNextBlock(buffer, midiMessages, 0, buffer.getNumSamples());
     }
-    else // Monophonic (Mono or Legato)
+    else // Monophonic (Mono or Legato) - Sample-Accurate Sliced MIDI Processing
     {
         // Stop voices 1..7 so only voice 0 handles monophonic rendering
         for (int v = 1; v < synth.getNumVoices(); ++v)
@@ -359,8 +444,19 @@ void WaveSlaveAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         {
             voice0->updateParameters(apvts, &animSnapshot);
 
+            int currentSample = 0;
+            int totalNumSamples = buffer.getNumSamples();
+
             for (const auto metadata : midiMessages)
             {
+                int eventSample = juce::jlimit(currentSample, totalNumSamples, metadata.samplePosition);
+                int sliceLen = eventSample - currentSample;
+                if (sliceLen > 0)
+                {
+                    voice0->renderNextBlock(buffer, currentSample, sliceLen);
+                    currentSample = eventSample;
+                }
+
                 auto msg = metadata.getMessage();
                 if (msg.isNoteOn())
                 {
@@ -465,11 +561,15 @@ void WaveSlaveAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                 }
             }
 
-            voice0->renderNextBlock(buffer, 0, buffer.getNumSamples());
+            if (currentSample < totalNumSamples)
+            {
+                voice0->renderNextBlock(buffer, currentSample, totalNumSamples - currentSample);
+            }
         }
     }
 
-    // Track whether any voice is currently active for real-time node modulation visualization
+    // Track whether any voice is currently active and get peak envelope level
+    float currentMasterEnv = 0.0f;
     {
         bool anyActive = false;
         int latestIdx = latestActiveVoiceIndex.load(std::memory_order_relaxed);
@@ -479,6 +579,7 @@ void WaveSlaveAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         {
             if (auto* wv = dynamic_cast<WaveSlaveVoice*>(synth.getVoice(v)))
             {
+                currentMasterEnv = juce::jmax(currentMasterEnv, wv->getCurrentEnvLevel());
                 if (wv->isActive())
                 {
                     anyActive = true;
@@ -505,12 +606,9 @@ void WaveSlaveAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
         anyVoiceActiveVis.store(anyActive, std::memory_order_relaxed);
     }
 
-    float masterGain = apvts.getRawParameterValue("MASTER_GAIN")->load();
-    buffer.applyGain(masterGain);
-
-    // Apply Low Pass and High Pass filters if enabled
-    bool lpfOn = apvts.getRawParameterValue("LPF_ENABLED")->load() > 0.5f;
-    bool hpfOn = apvts.getRawParameterValue("HPF_ENABLED")->load() > 0.5f;
+    // Apply Low Pass and High Pass filters (with dynamic envelope modulation)
+    bool lpfOn = apvts.getRawParameterValue("LPF_ENABLED")->load(std::memory_order_relaxed) > 0.5f;
+    bool hpfOn = apvts.getRawParameterValue("HPF_ENABLED")->load(std::memory_order_relaxed) > 0.5f;
 
     if (lpfOn || hpfOn)
     {
@@ -523,8 +621,14 @@ void WaveSlaveAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 
         if (lpfOn)
         {
-            float cutoff = juce::jlimit(20.0f, maxCutoff, apvts.getRawParameterValue("LPF_CUTOFF")->load());
-            float reso   = juce::jlimit(0.1f, 10.0f, apvts.getRawParameterValue("LPF_RESO")->load());
+            float baseCutoff = apvts.getRawParameterValue("LPF_CUTOFF")->load(std::memory_order_relaxed);
+            float envAmt = 0.0f;
+            if (auto* ep = apvts.getRawParameterValue("LPF_ENV_AMT"))
+                envAmt = ep->load(std::memory_order_relaxed);
+
+            float modCutoff = baseCutoff * std::pow(2.0f, envAmt * currentMasterEnv * 5.0f);
+            float cutoff = juce::jlimit(20.0f, maxCutoff, modCutoff);
+            float reso   = juce::jlimit(0.1f, 10.0f, apvts.getRawParameterValue("LPF_RESO")->load(std::memory_order_relaxed));
             lowPassFilter.setCutoffFrequency(cutoff);
             lowPassFilter.setResonance(reso);
             lowPassFilter.process(context);
@@ -532,12 +636,121 @@ void WaveSlaveAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
 
         if (hpfOn)
         {
-            float cutoff = juce::jlimit(20.0f, maxCutoff, apvts.getRawParameterValue("HPF_CUTOFF")->load());
-            float reso   = juce::jlimit(0.1f, 10.0f, apvts.getRawParameterValue("HPF_RESO")->load());
+            float baseCutoff = apvts.getRawParameterValue("HPF_CUTOFF")->load(std::memory_order_relaxed);
+            float envAmt = 0.0f;
+            if (auto* ep = apvts.getRawParameterValue("HPF_ENV_AMT"))
+                envAmt = ep->load(std::memory_order_relaxed);
+
+            float modCutoff = baseCutoff * std::pow(2.0f, envAmt * currentMasterEnv * 5.0f);
+            float cutoff = juce::jlimit(20.0f, maxCutoff, modCutoff);
+            float reso   = juce::jlimit(0.1f, 10.0f, apvts.getRawParameterValue("HPF_RESO")->load(std::memory_order_relaxed));
             highPassFilter.setCutoffFrequency(cutoff);
             highPassFilter.setResonance(reso);
             highPassFilter.process(context);
         }
+    }
+
+    // Parameter smoothing for Master Gain (eliminates zipper noise)
+    if (auto* mg = apvts.getRawParameterValue("MASTER_GAIN"))
+    {
+        smoothedMasterGain.setTargetValue(mg->load(std::memory_order_relaxed));
+        smoothedMasterGain.applyGain(buffer, buffer.getNumSamples());
+    }
+
+    // Master Soft Clipper (polyphonic saturation to prevent digital wrapping/harsh clips)
+    bool clipperOn = true;
+    if (auto* cp = apvts.getRawParameterValue("MASTER_CLIPPER"))
+        clipperOn = cp->load(std::memory_order_relaxed) > 0.5f;
+
+    if (clipperOn)
+    {
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+        {
+            auto* data = buffer.getWritePointer(ch);
+            for (int s = 0; s < buffer.getNumSamples(); ++s)
+            {
+                data[s] = std::tanh(data[s]);
+            }
+        }
+    }
+
+    // Built-in Effect: Chorus
+    if (auto* cp = apvts.getRawParameterValue("CHORUS_ENABLED"))
+    {
+        if (cp->load(std::memory_order_relaxed) > 0.5f)
+        {
+            float rate = apvts.getRawParameterValue("CHORUS_RATE")->load(std::memory_order_relaxed);
+            float depth = apvts.getRawParameterValue("CHORUS_DEPTH")->load(std::memory_order_relaxed);
+            float mix = apvts.getRawParameterValue("CHORUS_MIX")->load(std::memory_order_relaxed);
+            chorusEffect.setRate(rate);
+            chorusEffect.setDepth(depth);
+            chorusEffect.setMix(mix);
+            juce::dsp::AudioBlock<float> block(buffer);
+            juce::dsp::ProcessContextReplacing<float> context(block);
+            chorusEffect.process(context);
+        }
+    }
+
+    // Built-in Effect: Delay (Stereo Cross-Feedback)
+    if (auto* dp = apvts.getRawParameterValue("DELAY_ENABLED"))
+    {
+        if (dp->load(std::memory_order_relaxed) > 0.5f && delayBuffer.getNumSamples() > 0)
+        {
+            float timeSec = apvts.getRawParameterValue("DELAY_TIME")->load(std::memory_order_relaxed);
+            float feedback = juce::jlimit(0.0f, 0.95f, apvts.getRawParameterValue("DELAY_FEEDBACK")->load(std::memory_order_relaxed));
+            float mix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("DELAY_MIX")->load(std::memory_order_relaxed));
+            int delaySamples = juce::jlimit(1, delayBuffer.getNumSamples() - 1, (int)(timeSec * getSampleRate()));
+
+            for (int s = 0; s < buffer.getNumSamples(); ++s)
+            {
+                int readPos = (delayWritePos - delaySamples + delayBuffer.getNumSamples()) % delayBuffer.getNumSamples();
+                float dL = delayBuffer.getSample(0, readPos);
+                float dR = delayBuffer.getSample(1, readPos);
+
+                float inL = buffer.getSample(0, s);
+                float inR = (buffer.getNumChannels() > 1) ? buffer.getSample(1, s) : inL;
+
+                delayBuffer.setSample(0, delayWritePos, inL + dR * feedback);
+                delayBuffer.setSample(1, delayWritePos, inR + dL * feedback);
+
+                delayWritePos = (delayWritePos + 1) % delayBuffer.getNumSamples();
+
+                buffer.setSample(0, s, inL * (1.0f - mix) + dL * mix);
+                if (buffer.getNumChannels() > 1)
+                    buffer.setSample(1, s, inR * (1.0f - mix) + dR * mix);
+            }
+        }
+    }
+
+    // Built-in Effect: Reverb
+    if (auto* rp = apvts.getRawParameterValue("REVERB_ENABLED"))
+    {
+        if (rp->load(std::memory_order_relaxed) > 0.5f)
+        {
+            juce::dsp::Reverb::Parameters revParams;
+            revParams.roomSize = apvts.getRawParameterValue("REVERB_SIZE")->load(std::memory_order_relaxed);
+            revParams.damping  = apvts.getRawParameterValue("REVERB_DAMP")->load(std::memory_order_relaxed);
+            revParams.wetLevel = apvts.getRawParameterValue("REVERB_MIX")->load(std::memory_order_relaxed);
+            revParams.dryLevel = 1.0f - revParams.wetLevel * 0.5f;
+            revParams.width    = 1.0f;
+            reverbEffect.setParameters(revParams);
+
+            juce::dsp::AudioBlock<float> block(buffer);
+            juce::dsp::ProcessContextReplacing<float> context(block);
+            reverbEffect.process(context);
+        }
+    }
+
+    // Peak Metering: capture max peak for GUI thread reading
+    {
+        float maxL = buffer.getMagnitude(0, 0, buffer.getNumSamples());
+        float maxR = (buffer.getNumChannels() > 1) ? buffer.getMagnitude(1, 0, buffer.getNumSamples()) : maxL;
+
+        float curL = peakMeterL.load(std::memory_order_relaxed);
+        while (maxL > curL && !peakMeterL.compare_exchange_weak(curL, maxL, std::memory_order_relaxed)) {}
+
+        float curR = peakMeterR.load(std::memory_order_relaxed);
+        while (maxR > curR && !peakMeterR.compare_exchange_weak(curR, maxR, std::memory_order_relaxed)) {}
     }
     
     // Push to ring buffers for visualizers
@@ -571,6 +784,51 @@ void WaveSlaveAudioProcessor::allNotesOff()
         synth.getVoice(i)->stopNote(0.0f, false);
     }
     anyVoiceActiveVis.store(false, std::memory_order_relaxed);
+    syncLivePartialStateFromParams();
+}
+
+void WaveSlaveAudioProcessor::syncLivePartialStateFromParams()
+{
+    int baseNote = 60;
+    if (auto* bn = apvts.getRawParameterValue("BASE_NOTE"))
+        baseNote = (int)bn->load();
+    lastBaseNoteParam = baseNote;
+    float baseFreq = 440.0f * std::pow(2.0f, (baseNote - 69.0f) / 12.0f);
+    lastPlayedFrequency.store(baseFreq, std::memory_order_relaxed);
+    lastTriggeredFrequency.store(baseFreq, std::memory_order_relaxed);
+
+    float masterPan = 0.0f;
+    if (auto* mp = apvts.getRawParameterValue("MASTER_PAN"))
+        masterPan = mp->load();
+
+    for (int i = 0; i < 16; ++i)
+    {
+        juce::String s = juce::String(i + 1);
+        float ratio = (float)(i + 1);
+        float gain  = 1.0f / (float)(i + 1);
+        float semi  = 0.0f;
+        float det   = 0.0f;
+        float pan   = 0.0f;
+
+        if (auto* p = apvts.getRawParameterValue("RATIO" + s))    ratio = p->load();
+        if (auto* p = apvts.getRawParameterValue("GAIN" + s))     gain  = p->load();
+        if (auto* p = apvts.getRawParameterValue("SEMITONE" + s)) semi  = p->load();
+        if (auto* p = apvts.getRawParameterValue("DETUNE" + s))   det   = p->load();
+        if (auto* p = apvts.getRawParameterValue("PAN" + s))      pan   = p->load();
+
+        float effSemi = semi + (det / 100.0f);
+        float effRatio = juce::jlimit(0.01f, 32.0f, ratio * std::pow(2.0f, effSemi / 12.0f));
+        float totalPan = juce::jlimit(-1.0f, 1.0f, masterPan + pan);
+
+        livePartialState[i].effectiveRatio.store(effRatio, std::memory_order_relaxed);
+        livePartialState[i].effectiveGain.store(gain, std::memory_order_relaxed);
+        livePartialState[i].effectiveSemitone.store(juce::jlimit(-24.0f, 24.0f, effSemi), std::memory_order_relaxed);
+        livePartialState[i].effectiveDetune.store(det, std::memory_order_relaxed);
+        livePartialState[i].effectivePan.store(totalPan, std::memory_order_relaxed);
+        livePartialState[i].animPhase.store(0.0f, std::memory_order_relaxed);
+        livePartialState[i].envLevel.store(1.0f, std::memory_order_relaxed);
+        livePartialState[i].lfoValue.store(0.0f, std::memory_order_relaxed);
+    }
 }
 
 PartialKeyframe WaveSlaveAudioProcessor::getPartialBaseSettings(int partialIndex) const
@@ -835,6 +1093,9 @@ void WaveSlaveAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     std::unique_ptr<juce::XmlElement> xml (state.createXml());
     if (xml != nullptr)
     {
+        xml->setAttribute("editorWidth", editorWidth);
+        xml->setAttribute("editorHeight", editorHeight);
+
         auto* wtXml = xml->createNewChildElement("CustomWavetables");
         for (int s = 0; s < numCustomSlots; ++s)
         {
@@ -869,6 +1130,11 @@ void WaveSlaveAudioProcessor::setStateInformation (const void* data, int sizeInB
     {
         if (xmlState->hasTagName (apvts.state.getType()))
         {
+            editorWidth = xmlState->getIntAttribute("editorWidth", 940);
+            editorHeight = xmlState->getIntAttribute("editorHeight", 660);
+            if (auto* editor = getActiveEditor())
+                editor->setSize(editorWidth, editorHeight);
+
             if (auto* wtXml = xmlState->getChildByName("CustomWavetables"))
             {
                 for (auto* slotXml : wtXml->getChildIterator())
