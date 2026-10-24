@@ -81,8 +81,14 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
 
         auto doSwitch = [this, nextId]()
         {
+            int prevId = factoryPresetBox.getSelectedId();
             currentPresetId = nextId;
             factoryPresetBox.setSelectedId(nextId, juce::sendNotificationSync);
+            if (prevId == nextId)
+            {
+                if (nextId >= 1 && nextId <= 17)
+                    applyFactoryPreset(nextId);
+            }
         };
 
         if (promptNeeded)
@@ -99,8 +105,14 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
                 {
                     if (result == 1 && safeThis != nullptr)
                     {
+                        int prevId = safeThis->factoryPresetBox.getSelectedId();
                         safeThis->currentPresetId = nextId;
                         safeThis->factoryPresetBox.setSelectedId(nextId, juce::sendNotificationSync);
+                        if (prevId == nextId)
+                        {
+                            if (nextId >= 1 && nextId <= 17)
+                                safeThis->applyFactoryPreset(nextId);
+                        }
                     }
                 }));
         }
@@ -201,7 +213,7 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
                     oscilloscope.repaint();
                     recordPresetSnapshot();
                     juce::Component::SafePointer<WaveSlaveAudioProcessorEditor> safeThis(this);
-                    juce::Timer::callAfterDelay(550, [safeThis]() {
+                    juce::MessageManager::callAsync([safeThis]() {
                         if (safeThis != nullptr)
                         {
                             safeThis->recordPresetSnapshot();
@@ -300,10 +312,9 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
 
     addAndMakeVisible(partialsComboBox);
     partialsComboBox.setScrollWheelEnabled(false);
-    partialsComboBox.addItem("None", 1);
-    for (int i = 1; i <= 15; ++i)
+    for (int i = 1; i <= 16; ++i)
     {
-        partialsComboBox.addItem(juce::String(i) + (i == 1 ? " Partial" : " Partials"), i + 1);
+        partialsComboBox.addItem(juce::String(i) + (i == 1 ? " Partial" : " Partials"), i);
     }
 
     // Combined Edit & Bulk Transformations dropdown
@@ -447,7 +458,7 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
 
         const auto isEven = [](int i) { return (i % 2) == 0; };
 
-        if      (result == 99) resetAllPartials();
+        if      (result == 99) applyFactoryPreset(1);
         else if (result == 98) randomizePartials();
         else if (result == 97) copyAllPartials();
         else if (result == 96) pasteAllPartials();
@@ -1483,12 +1494,6 @@ void WaveSlaveAudioProcessorEditor::resetAllPartials()
         p->beginChangeGesture(); p->setValueNotifyingHost(0.0f); p->endChangeGesture();
     }
     updateFxButtonsText();
-
-    for (int i = 0; i < 16; ++i)
-        spectrograph.recordKeyframeFromSliders(i);
-    audioProcessor.syncLivePartialStateFromParams();
-    spectrograph.syncTimelineControlsToSelectedPartial();
-    partialsContainer.refreshAllStrips();
 }
 
 void WaveSlaveAudioProcessorEditor::copyAllPartials()
@@ -2034,7 +2039,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             setParam(ap, "WAVEFORM"    + juce::String(i), 2.0f); // Saw
             setParam(ap, "RATIO"       + juce::String(i), ratios[i-1]);
             setParam(ap, "GAIN"        + juce::String(i), gains[i-1]);
-            setParam(ap, "DETUNE"      + juce::String(i), 0.0f);
+            setParam(ap, "DETUNE"      + juce::String(i), detunes[i-1]);
             setParam(ap, "PAN"         + juce::String(i), pans[i-1]);
             setParam(ap, "P_GLIDE"     + juce::String(i), 0.05f);
             setParam(ap, "P_ATTACK"    + juce::String(i), 0.004f);
@@ -2219,9 +2224,9 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             setParam(ap, "PAN"         + juce::String(i), 0.0f);
             setParam(ap, "P_GLIDE"     + juce::String(i), 0.08f);
             setParam(ap, "P_ATTACK"    + juce::String(i), 0.002f);
-            setParam(ap, "P_DECAY"     + juce::String(i), 0.18f);
-            setParam(ap, "P_SUSTAIN"   + juce::String(i), 0.0f);
-            setParam(ap, "P_RELEASE"   + juce::String(i), 0.10f);
+            setParam(ap, "P_DECAY"     + juce::String(i), 0.35f);
+            setParam(ap, "P_SUSTAIN"   + juce::String(i), 0.70f);
+            setParam(ap, "P_RELEASE"   + juce::String(i), 0.15f);
             setParam(ap, "MOD_TARGET"  + juce::String(i), 0.0f); // None
             setParam(ap, "MOD_DEPTH"   + juce::String(i), 0.0f);
             setParam(ap, "MOD_RATE"    + juce::String(i), 2.0f);
@@ -2236,9 +2241,9 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             setParam(ap, "GAIN" + juce::String(i), 0.0f);
 
         setParam(ap, "ATTACK",      0.002f);
-        setParam(ap, "DECAY",       0.18f);
-        setParam(ap, "SUSTAIN",     0.0f);
-        setParam(ap, "RELEASE",     0.10f);
+        setParam(ap, "DECAY",       0.35f);
+        setParam(ap, "SUSTAIN",     0.70f);
+        setParam(ap, "RELEASE",     0.15f);
         setParam(ap, "MASTER_GAIN", 0.58f);
         setParam(ap, "LPF_ENABLED", 1.0f);
         setParam(ap, "LPF_CUTOFF",  1100.0f); // Famous squelchy TB-303 cutoff
@@ -2371,8 +2376,8 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             setParam(ap, "P_ADSR_ENABLED" + juce::String(i), (i >= 2 ? 1.0f : 0.0f)); // Damping on upper harmonics
             setParam(ap, "P_ATTACK"    + juce::String(i), 0.001f);
             setParam(ap, "P_DECAY"     + juce::String(i), pDecays[i-1]);
-            setParam(ap, "P_SUSTAIN"   + juce::String(i), 0.0f);
-            setParam(ap, "P_RELEASE"   + juce::String(i), pDecays[i-1]);
+            setParam(ap, "P_SUSTAIN"   + juce::String(i), (i == 1 ? 0.20f : 0.0f));
+            setParam(ap, "P_RELEASE"   + juce::String(i), 0.80f);
             setParam(ap, "MOD_TARGET"  + juce::String(i), 0.0f);
             setParam(ap, "MOD_DEPTH"   + juce::String(i), 0.0f);
             setParam(ap, "MOD_RATE"    + juce::String(i), 2.0f);
@@ -2386,10 +2391,10 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             setParam(ap, "GAIN" + juce::String(i), 0.0f);
 
         setParam(ap, "ATTACK",      0.001f);
-        setParam(ap, "DECAY",       0.60f);
-        setParam(ap, "SUSTAIN",     0.0f);
-        setParam(ap, "RELEASE",     0.60f);
-        setParam(ap, "MASTER_GAIN", 0.52f);
+        setParam(ap, "DECAY",       0.80f);
+        setParam(ap, "SUSTAIN",     0.15f);
+        setParam(ap, "RELEASE",     0.80f);
+        setParam(ap, "MASTER_GAIN", 0.54f);
         setParam(ap, "LPF_ENABLED", 1.0f);
         setParam(ap, "LPF_CUTOFF",  11000.0f);
         setParam(ap, "LPF_RESO",    1.2f);
@@ -3177,7 +3182,7 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
     recordPresetSnapshot();
 
     juce::Component::SafePointer<WaveSlaveAudioProcessorEditor> safeThis(this);
-    juce::Timer::callAfterDelay(550, [safeThis]() {
+    juce::MessageManager::callAsync([safeThis]() {
         if (safeThis != nullptr)
         {
             safeThis->recordPresetSnapshot();
@@ -3187,21 +3192,19 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
 
     if (index == 1) // Reset
     {
-        factoryPresetBox.setTextWhenNothingSelected("Presets");
-        factoryPresetBox.setSelectedId(0, juce::dontSendNotification);
+        factoryPresetBox.setSelectedId(1, juce::dontSendNotification);
         regenerateButton.setVisible(false);
         resized();
     }
     else if (index == 17) // Random
     {
-        factoryPresetBox.setTextWhenNothingSelected("Random");
-        factoryPresetBox.setSelectedId(0, juce::dontSendNotification);
+        factoryPresetBox.setSelectedId(17, juce::dontSendNotification);
         regenerateButton.setVisible(true);
         resized();
     }
     else
     {
-        factoryPresetBox.setTextWhenNothingSelected("Presets");
+        factoryPresetBox.setSelectedId(index, juce::dontSendNotification);
         regenerateButton.setVisible(false);
         resized();
     }

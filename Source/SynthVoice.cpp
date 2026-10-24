@@ -447,7 +447,7 @@ void WaveSlaveVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer, in
                     float effSemitone = partialSemitones[i] + effDetuneSemi + currentPitchBendSemitones;
                     float semitoneShift = std::pow(2.0f, effSemitone / 12.0f);
                     (*liveVisStates)[i].effectiveRatio.store(juce::jlimit(0.01f, 32.0f, partialRatios[i] * semitoneShift), std::memory_order_relaxed);
-                    (*liveVisStates)[i].effectiveGain.store(0.0f, std::memory_order_relaxed);
+                    (*liveVisStates)[i].effectiveGain.store(partialGains[i], std::memory_order_relaxed);
                     (*liveVisStates)[i].effectiveSemitone.store(juce::jlimit(-24.0f, 24.0f, effSemitone), std::memory_order_relaxed);
                     (*liveVisStates)[i].effectiveDetune.store(partialDetunes[i], std::memory_order_relaxed);
                     (*liveVisStates)[i].effectivePan.store(juce::jlimit(-1.0f, 1.0f, masterPan + partialPans[i]), std::memory_order_relaxed);
@@ -587,9 +587,9 @@ void WaveSlaveVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer, in
             // Panning, ADSR & gain calculations
             float totalPan = juce::jlimit(-1.0f, 1.0f, masterPan + animPan + panModAmount);
             float totalEnv = env * pEnv;
-            float visGain = juce::jlimit(0.0f, 1.0f, animGain * totalEnv * levelModMultiplier);
+            float visGain = juce::jlimit(0.0f, 1.0f, animGain * levelModMultiplier);
             float velFactor = velocityEnabled ? currentVelocity : 1.0f;
-            float currentGain = visGain * velFactor;
+            float currentGain = animGain * totalEnv * levelModMultiplier * velFactor;
 
             float baseFreq = 440.0f * std::pow(2.0f, (partialCurrentPitch[i] - 69.0f) / 12.0f);
             float effDetuneSemi = partialDetunes[i] / 100.0f;
