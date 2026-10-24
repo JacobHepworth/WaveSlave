@@ -203,7 +203,12 @@ public:
 
     const std::vector<juce::Point<float>>& getSlotSplinePoints(int slot) const { return slotSplinePoints[juce::jlimit(0, 3, slot)]; }
     std::vector<juce::Point<float>>& getSlotSplinePoints(int slot) { return slotSplinePoints[juce::jlimit(0, 3, slot)]; }
-    void setSlotSplinePoints(int slot, const std::vector<juce::Point<float>>& points) { slotSplinePoints[juce::jlimit(0, 3, slot)] = points; }
+    void setSlotSplinePoints(int slot, const std::vector<juce::Point<float>>& points)
+    {
+        int s = juce::jlimit(0, 3, slot);
+        slotSplinePoints[s] = points;
+        processor.customSplinePoints[s] = points;
+    }
 
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseDrag(const juce::MouseEvent& e) override;

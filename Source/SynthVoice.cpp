@@ -135,32 +135,22 @@ void WaveSlaveVoice::startNote (int midiNoteNumber, float velocity, juce::Synthe
     if (latestActiveVoiceIdx != nullptr)
         latestActiveVoiceIdx->store(voiceIndex, std::memory_order_relaxed);
 
-    bool voiceIsActive = adsr.isActive();
     adsr.noteOn();
-
-    bool isLegato = (voiceMode == 2 && voiceIsActive);
 
     for (int i = 0; i < activePartials; ++i)
     {
-        if (!isLegato)
-        {
-            oscillators[i].reset();
-            if (partialAdsrEnabled[i])
-                partialAdsr[i].noteOn();
-            partialLfoPhases[i] = partialModPhaseOffsets[i] / 360.0f;
-            partialAnimElapsed[i] = 0.0f;
-            partialAnimPhase[i] = 0.0f;
-            partialNoteHeld[i] = true;
-            partialReleaseElapsed[i] = 0.0f;
-            partialReleaseStartPhase[i] = 0.0f;
-        }
-        else
-        {
-            partialNoteHeld[i] = true;
-        }
+        oscillators[i].reset();
+        if (partialAdsrEnabled[i])
+            partialAdsr[i].noteOn();
+        partialLfoPhases[i] = partialModPhaseOffsets[i] / 360.0f;
+        partialAnimElapsed[i] = 0.0f;
+        partialAnimPhase[i] = 0.0f;
+        partialNoteHeld[i] = true;
+        partialReleaseElapsed[i] = 0.0f;
+        partialReleaseStartPhase[i] = 0.0f;
 
         float effGlide = (partialGlideTimes[i] > 0.001f ? partialGlideTimes[i] : glideTime);
-        if (effGlide <= 0.001f || partialCurrentFreq[i] <= 0.0f || !voiceIsActive)
+        if (effGlide <= 0.001f || partialCurrentFreq[i] <= 0.0f)
             partialCurrentFreq[i] = targetFrequency;
 
         float semitoneShift = std::pow(2.0f, (partialSemitones[i] + currentPitchBendSemitones) / 12.0f);
@@ -176,63 +166,46 @@ void WaveSlaveVoice::setTargetNote (int midiNoteNumber, float velocity, bool isL
     if (latestActiveVoiceIdx != nullptr)
         latestActiveVoiceIdx->store(voiceIndex, std::memory_order_relaxed);
 
-    if (!adsr.isActive())
-    {
-        for (int i = 0; i < maxPartials; ++i)
-            partialCurrentFreq[i] = targetFrequency;
+    float envLvl = currentEnvLevel.load(std::memory_order_relaxed);
+    bool isAudible = adsr.isActive() && (envLvl > 0.005f || adsrParams.sustain > 0.005f);
 
+    if (!isAudible || !isLegatoTransition)
+    {
         adsr.noteOn();
 
         for (int i = 0; i < activePartials; ++i)
         {
-            oscillators[i].reset();
             if (partialAdsrEnabled[i])
                 partialAdsr[i].noteOn();
-            partialLfoPhases[i] = partialModPhaseOffsets[i] / 360.0f;
-            partialAnimElapsed[i] = 0.0f;
-            partialAnimPhase[i] = 0.0f;
+
             partialNoteHeld[i] = true;
             partialReleaseElapsed[i] = 0.0f;
             partialReleaseStartPhase[i] = 0.0f;
 
-            float semitoneShift = std::pow(2.0f, (partialSemitones[i] + currentPitchBendSemitones) / 12.0f);
-            oscillators[i].setFrequency(partialCurrentFreq[i] * semitoneShift * partialRatios[i], currentSampleRate);
-        }
-        return;
-    }
+            if (!isLegatoTransition)
+            {
+                oscillators[i].reset();
+                partialLfoPhases[i] = partialModPhaseOffsets[i] / 360.0f;
+                partialAnimElapsed[i] = 0.0f;
+                partialAnimPhase[i] = 0.0f;
+            }
 
-    if (isLegatoTransition)
-    {
-        for (int i = 0; i < activePartials; ++i)
-        {
-            partialNoteHeld[i] = true;
             float effGlide = (partialGlideTimes[i] > 0.001f ? partialGlideTimes[i] : glideTime);
             if (effGlide <= 0.001f)
                 partialCurrentFreq[i] = targetFrequency;
+
+            float semitoneShift = std::pow(2.0f, (partialSemitones[i] + currentPitchBendSemitones) / 12.0f);
+            oscillators[i].setFrequency(partialCurrentFreq[i] * semitoneShift * partialRatios[i], currentSampleRate);
         }
     }
     else
     {
-        adsr.noteOn();
-
         for (int i = 0; i < activePartials; ++i)
         {
-            oscillators[i].reset();
-            if (partialAdsrEnabled[i])
-                partialAdsr[i].noteOn();
-            partialLfoPhases[i] = partialModPhaseOffsets[i] / 360.0f;
-            partialAnimElapsed[i] = 0.0f;
-            partialAnimPhase[i] = 0.0f;
             partialNoteHeld[i] = true;
-            partialReleaseElapsed[i] = 0.0f;
-            partialReleaseStartPhase[i] = 0.0f;
-
             float effGlide = (partialGlideTimes[i] > 0.001f ? partialGlideTimes[i] : glideTime);
             if (effGlide <= 0.001f)
                 partialCurrentFreq[i] = targetFrequency;
-
-            float semitoneShift = std::pow(2.0f, (partialSemitones[i] + currentPitchBendSemitones) / 12.0f);
-            oscillators[i].setFrequency(partialCurrentFreq[i] * semitoneShift * partialRatios[i], currentSampleRate);
         }
     }
 }
@@ -256,6 +229,7 @@ void WaveSlaveVoice::stopNote (float /*velocity*/, bool allowTailOff)
     }
     else
     {
+        currentEnvLevel.store(0.0f, std::memory_order_relaxed);
         clearCurrentNote();
         adsr.reset();
         for (int i = 0; i < maxPartials; ++i)
@@ -286,6 +260,7 @@ void WaveSlaveVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer, in
     
     if (!adsr.isActive())
     {
+        currentEnvLevel.store(0.0f, std::memory_order_relaxed);
         clearCurrentNote();
         return;
     }
@@ -321,6 +296,7 @@ void WaveSlaveVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer, in
         }
 
         float env = adsr.getNextSample();
+        currentEnvLevel.store(env, std::memory_order_relaxed);
         float currentLeftSample = 0.0f;
         float currentRightSample = 0.0f;
 

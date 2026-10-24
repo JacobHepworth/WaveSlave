@@ -50,6 +50,7 @@ public:
 
     static constexpr int numCustomSlots = 4;
     std::array<std::array<std::atomic<float>, 512>, numCustomSlots> customWavetables;
+    std::array<std::vector<juce::Point<float>>, numCustomSlots> customSplinePoints;
     void generateStandardWaveToCustomTable(int slot, int waveType);
     void generateStandardWaveToCustomTable(int waveType) { generateStandardWaveToCustomTable(0, waveType); }
     void allNotesOff();

@@ -51,6 +51,11 @@ WaveSlaveAudioProcessor::WaveSlaveAudioProcessor()
     generateStandardWaveToCustomTable(2, 2); // Slot 3: Saw
     generateStandardWaveToCustomTable(3, 3); // Slot 4: Square
 
+    customSplinePoints[0] = { {0.0f, 0.0f}, {0.25f, 1.0f}, {0.5f, 0.0f}, {0.75f, -1.0f}, {1.0f, 0.0f} }; // Sine
+    customSplinePoints[1] = { {0.0f, 0.0f}, {0.25f, 1.0f}, {0.75f, -1.0f}, {1.0f, 0.0f} };               // Tri
+    customSplinePoints[2] = { {0.0f, 0.0f}, {0.49f, 1.0f}, {0.51f, -1.0f}, {1.0f, 0.0f} };               // Saw
+    customSplinePoints[3] = { {0.0f, 1.0f}, {0.49f, 1.0f}, {0.51f, -1.0f}, {1.0f, -1.0f} };              // Square
+
     // Ensure filters start disabled by default
     if (auto* p = apvts.getParameter("LPF_ENABLED")) p->setValueNotifyingHost(0.0f);
     if (auto* p = apvts.getParameter("HPF_ENABLED")) p->setValueNotifyingHost(0.0f);
@@ -362,12 +367,13 @@ void WaveSlaveAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                     int noteNum = msg.getNoteNumber();
                     float vel = msg.getFloatVelocity();
 
+                    bool hadHeldNotes = !heldMidiNotes.empty();
+
                     heldMidiNotes.erase(
                         std::remove_if(heldMidiNotes.begin(), heldMidiNotes.end(),
                                        [noteNum](const std::pair<int, float>& p) { return p.first == noteNum; }),
                         heldMidiNotes.end());
 
-                    bool wasPlaying = !heldMidiNotes.empty() && voice0->isActive();
                     heldMidiNotes.push_back({ noteNum, vel });
 
                     float noteFreq = (float)juce::MidiMessage::getMidiNoteInHertz(noteNum);
@@ -375,7 +381,7 @@ void WaveSlaveAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
                     lastTriggeredFrequency.store(noteFreq, std::memory_order_relaxed);
                     noteTriggerCounter.fetch_add(1, std::memory_order_relaxed);
 
-                    if (!wasPlaying)
+                    if (!hadHeldNotes)
                     {
                         auto sound = synth.getNumSounds() > 0 ? synth.getSound(0).get() : nullptr;
                         voice0->startNote(noteNum, vel, sound, 0);
@@ -562,8 +568,7 @@ void WaveSlaveAudioProcessor::allNotesOff()
     sustainPedalDown = false;
     for (int i = 0; i < synth.getNumVoices(); ++i)
     {
-        if (synth.getVoice(i)->isVoiceActive())
-            synth.getVoice(i)->stopNote(0.0f, false);
+        synth.getVoice(i)->stopNote(0.0f, false);
     }
     anyVoiceActiveVis.store(false, std::memory_order_relaxed);
 }
@@ -839,6 +844,18 @@ void WaveSlaveAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
             for (int i = 0; i < 512; ++i)
                 mos.writeFloat(customWavetables[s][i].load(std::memory_order_relaxed));
             slotXml->setAttribute("samples", mos.getMemoryBlock().toBase64Encoding());
+
+            const auto& points = customSplinePoints[s];
+            if (!points.empty())
+            {
+                juce::String ptStr;
+                for (int p = 0; p < (int)points.size(); ++p)
+                {
+                    if (p > 0) ptStr << ";";
+                    ptStr << juce::String(points[p].x, 4) << "," << juce::String(points[p].y, 4);
+                }
+                slotXml->setAttribute("splinePoints", ptStr);
+            }
         }
         serializeAnimationsToXml(*xml);
         copyXmlToBinary (*xml, destData);
@@ -866,6 +883,19 @@ void WaveSlaveAudioProcessor::setStateInformation (const void* data, int sizeInB
                             juce::MemoryInputStream mis(mb, false);
                             for (int i = 0; i < 512; ++i)
                                 customWavetables[s][i].store(mis.readFloat(), std::memory_order_relaxed);
+                        }
+
+                        juce::String ptStr = slotXml->getStringAttribute("splinePoints");
+                        if (ptStr.isNotEmpty())
+                        {
+                            customSplinePoints[s].clear();
+                            auto tokens = juce::StringArray::fromTokens(ptStr, ";", "");
+                            for (auto& tok : tokens)
+                            {
+                                auto xy = juce::StringArray::fromTokens(tok, ",", "");
+                                if (xy.size() == 2)
+                                    customSplinePoints[s].push_back({ xy[0].getFloatValue(), xy[1].getFloatValue() });
+                            }
                         }
                     }
                 }

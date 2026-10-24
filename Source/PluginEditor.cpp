@@ -46,145 +46,44 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
         if (id >= 1) applyFactoryPreset(id);
     };
     
+    addChildComponent(regenerateButton);
+    regenerateButton.setButtonText("Regenerate");
+    regenerateButton.setTooltip("Regenerate a new random sound profile");
+    regenerateButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF262626));
+    regenerateButton.setColour(juce::TextButton::textColourOffId, juce::Colour(0xFFE0E0E0));
+    regenerateButton.onClick = [this]()
+    {
+        juce::Component::SafePointer<WaveSlaveAudioProcessorEditor> safeThis(this);
+        juce::AlertWindow::showOkCancelBox(
+            juce::AlertWindow::QuestionIcon,
+            "Regenerate Random Profile",
+            "Are you sure you want to regenerate a new random patch? Current unsaved settings will be overwritten.",
+            "Regenerate",
+            "Cancel",
+            this,
+            juce::ModalCallbackFunction::create([safeThis](int result)
+            {
+                if (safeThis != nullptr && result == 1)
+                {
+                    safeThis->applyFactoryPreset(18);
+                }
+            })
+        );
+    };
+
     addAndMakeVisible(fileMenuBox);
     fileMenuBox.setScrollWheelEnabled(false);
     fileMenuBox.setTextWhenNothingSelected("File");
-    fileMenuBox.addItem("Save Preset...", 1);
-    fileMenuBox.addItem("Load Preset...", 2);
+    fileMenuBox.addItem("Save Profile...", 1);
+    fileMenuBox.addItem("Load Profile...", 2);
+    fileMenuBox.addSeparator();
+    fileMenuBox.addItem("Save Preset...", 3);
+    fileMenuBox.addItem("Load Preset...", 4);
     fileMenuBox.setSelectedId(0, juce::dontSendNotification);
     fileMenuBox.onChange = [this]() {
         int id = fileMenuBox.getSelectedId();
-        if (id == 1) // Save
-        {
-            fileChooser = std::make_unique<juce::FileChooser>("Save Preset", juce::File::getSpecialLocation(juce::File::userDocumentsDirectory), "*.xml");
-            auto folderChooserFlags = juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles;
-            fileChooser->launchAsync(folderChooserFlags, [this](const juce::FileChooser& chooser) {
-                juce::File result = chooser.getResult();
-                if (result.existsAsFile()) result.deleteFile();
-                if (result != juce::File{}) {
-                    juce::XmlElement presetXml("WaveSlavePreset");
-                    presetXml.setAttribute("version", "1.0");
-
-                    auto state = audioProcessor.apvts.copyState();
-                    if (auto paramXml = state.createXml())
-                        presetXml.addChildElement(paramXml.release());
-
-                    auto* wtXml = presetXml.createNewChildElement("CustomWavetables");
-                    for (int s = 0; s < 4; ++s)
-                    {
-                        auto* slotXml = wtXml->createNewChildElement("Slot");
-                        slotXml->setAttribute("index", s);
-
-                        juce::MemoryOutputStream mos;
-                        for (int i = 0; i < 512; ++i)
-                            mos.writeFloat(audioProcessor.customWavetables[s][i].load(std::memory_order_relaxed));
-                        slotXml->setAttribute("samples", mos.getMemoryBlock().toBase64Encoding());
-
-                        const auto& points = oscilloscope.getSlotSplinePoints(s);
-                        juce::String ptStr;
-                        for (int p = 0; p < (int)points.size(); ++p)
-                        {
-                            if (p > 0) ptStr << ";";
-                            ptStr << juce::String(points[p].x, 4) << "," << juce::String(points[p].y, 4);
-                        }
-                        slotXml->setAttribute("splinePoints", ptStr);
-                    }
-
-                    audioProcessor.serializeAnimationsToXml(presetXml);
-
-                    presetXml.writeTo(result);
-                }
-            });
-        }
-        else if (id == 2) // Load
-        {
-            fileChooser = std::make_unique<juce::FileChooser>("Load Preset", juce::File::getSpecialLocation(juce::File::userDocumentsDirectory), "*.xml");
-            auto folderChooserFlags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
-            fileChooser->launchAsync(folderChooserFlags, [this](const juce::FileChooser& chooser) {
-                juce::File result = chooser.getResult();
-                if (result.existsAsFile()) {
-                    std::unique_ptr<juce::XmlElement> rootXml(juce::XmlDocument::parse(result));
-                    if (rootXml != nullptr)
-                    {
-                        isApplyingPreset = true;
-
-                        juce::XmlElement* paramXml = nullptr;
-                        juce::XmlElement* wtXml = nullptr;
-
-                        if (rootXml->hasTagName("WaveSlavePreset"))
-                        {
-                            paramXml = rootXml->getChildByName(audioProcessor.apvts.state.getType().toString());
-                            wtXml = rootXml->getChildByName("CustomWavetables");
-                        }
-                        else if (rootXml->hasTagName(audioProcessor.apvts.state.getType()))
-                        {
-                            paramXml = rootXml.get();
-                            wtXml = rootXml->getChildByName("CustomWavetables");
-                        }
-
-                        if (paramXml != nullptr)
-                        {
-                            audioProcessor.apvts.replaceState(juce::ValueTree::fromXml(*paramXml));
-                        }
-
-                        audioProcessor.deserializeAnimationsFromXml(*rootXml);
-                        if (paramXml != nullptr && paramXml != rootXml.get() && rootXml->getChildByName("PartialAnimations") == nullptr)
-                        {
-                            audioProcessor.deserializeAnimationsFromXml(*paramXml);
-                        }
-
-                        if (wtXml != nullptr)
-                        {
-                            for (auto* slotXml : wtXml->getChildIterator())
-                            {
-                                int s = slotXml->getIntAttribute("index", -1);
-                                if (s >= 0 && s < 4)
-                                {
-                                    juce::MemoryBlock mb;
-                                    mb.fromBase64Encoding(slotXml->getStringAttribute("samples"));
-                                    if (mb.getSize() >= 512 * sizeof(float))
-                                    {
-                                        juce::MemoryInputStream mis(mb, false);
-                                        for (int i = 0; i < 512; ++i)
-                                            audioProcessor.customWavetables[s][i].store(mis.readFloat(), std::memory_order_relaxed);
-                                    }
-
-                                    juce::String ptStr = slotXml->getStringAttribute("splinePoints");
-                                    if (ptStr.isNotEmpty())
-                                    {
-                                        auto& splineVec = oscilloscope.getSlotSplinePoints(s);
-                                        splineVec.clear();
-                                        auto tokens = juce::StringArray::fromTokens(ptStr, ";", "");
-                                        for (auto& tok : tokens)
-                                        {
-                                            auto xy = juce::StringArray::fromTokens(tok, ",", "");
-                                            if (xy.size() == 2)
-                                                splineVec.push_back({ xy[0].getFloatValue(), xy[1].getFloatValue() });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        isApplyingPreset = false;
-
-                        int activeNum = (int)audioProcessor.apvts.getRawParameterValue("NUM_PARTIALS")->load();
-                        partialsContainer.setActiveCount(activeNum);
-                        partialsContainer.refreshAllStrips();
-                        updatePartialsLayout(activeNum);
-                        updateVoiceDesc();
-                        resized();
-                        recordPresetSnapshot();
-                        factoryPresetBox.setSelectedId(0, juce::dontSendNotification);
-                        factoryPresetBox.setTextWhenNothingSelected("Custom");
-                        spectrograph.syncTimelineControlsToSelectedPartial();
-                        oscilloscope.repaint();
-                        spectrograph.repaint();
-                    }
-                }
-            });
-        }
-        // Reset selection back to "File"
+        if (id == 1 || id == 3) saveProfile();
+        else if (id == 2 || id == 4) loadProfile();
         fileMenuBox.setSelectedId(0, juce::dontSendNotification);
     };
 
@@ -197,12 +96,17 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
     outputLabel.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(outputLabel);
 
-
     mainEnvLabel.setText("ENVELOPE", juce::dontSendNotification);
     mainEnvLabel.setFont(juce::Font(10.0f, juce::Font::bold));
     mainEnvLabel.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.6f));
     mainEnvLabel.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(mainEnvLabel);
+
+    susRelEnvLabel.setText("SUSTAIN / RELEASE", juce::dontSendNotification);
+    susRelEnvLabel.setFont(juce::Font(10.0f, juce::Font::bold));
+    susRelEnvLabel.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.6f));
+    susRelEnvLabel.setJustificationType(juce::Justification::centred);
+    addChildComponent(susRelEnvLabel);
 
     // Partials section label
     partialsLabel.setText("PARTIALS", juce::dontSendNotification);
@@ -213,9 +117,11 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
 
     // Global Master Gain & Pan sliders
     addAndMakeVisible(masterGainSlider);
+    masterGainSlider.setTextBoxWidth(46);
     masterGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "MASTER_GAIN", masterGainSlider.slider);
 
     addAndMakeVisible(masterPanSlider);
+    masterPanSlider.setTextBoxWidth(46);
     masterPanSlider.slider.setDoubleClickReturnValue(true, 0.0);
     masterPanAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "MASTER_PAN", masterPanSlider.slider);
 
@@ -352,15 +258,19 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
 
     // ADSR
     addAndMakeVisible(attackVSlider);
+    attackVSlider.setTextBoxWidth(46);
     attackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "ATTACK", attackVSlider.slider);
 
     addAndMakeVisible(decayVSlider);
+    decayVSlider.setTextBoxWidth(46);
     decayAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "DECAY", decayVSlider.slider);
 
     addAndMakeVisible(sustainVSlider);
+    sustainVSlider.setTextBoxWidth(46);
     sustainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "SUSTAIN", sustainVSlider.slider);
 
     addAndMakeVisible(releaseVSlider);
+    releaseVSlider.setTextBoxWidth(46);
     releaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(audioProcessor.apvts, "RELEASE", releaseVSlider.slider);
 
     // Low Pass Filter UI
@@ -381,11 +291,13 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
         audioProcessor.apvts, "LPF_ENABLED", lpfEnableButton);
 
     addChildComponent(lpfCutoffSlider);
+    lpfCutoffSlider.setTextBoxWidth(48);
     lpfCutoffSlider.slider.setTextValueSuffix(" Hz");
     lpfCutoffAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.apvts, "LPF_CUTOFF", lpfCutoffSlider.slider);
 
     addChildComponent(lpfResoSlider);
+    lpfResoSlider.setTextBoxWidth(48);
     lpfResoAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.apvts, "LPF_RESO", lpfResoSlider.slider);
 
@@ -407,31 +319,18 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
         audioProcessor.apvts, "HPF_ENABLED", hpfEnableButton);
 
     addChildComponent(hpfCutoffSlider);
+    hpfCutoffSlider.setTextBoxWidth(48);
     hpfCutoffSlider.slider.setTextValueSuffix(" Hz");
     hpfCutoffAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.apvts, "HPF_CUTOFF", hpfCutoffSlider.slider);
 
     addChildComponent(hpfResoSlider);
+    hpfResoSlider.setTextBoxWidth(48);
     hpfResoAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.apvts, "HPF_RESO", hpfResoSlider.slider);
 
-    auto updateFilterButtonsText = [this]() {
-        bool lOn = lpfEnableButton.getToggleState();
-        lpfEnableButton.setButtonText(lOn ? "ON" : "OFF");
-        lpfCutoffSlider.setEnabled(lOn);
-        lpfResoSlider.setEnabled(lOn);
-        lpfCutoffSlider.setAlpha(lOn ? 1.0f : 0.45f);
-        lpfResoSlider.setAlpha(lOn ? 1.0f : 0.45f);
-
-        bool hOn = hpfEnableButton.getToggleState();
-        hpfEnableButton.setButtonText(hOn ? "ON" : "OFF");
-        hpfCutoffSlider.setEnabled(hOn);
-        hpfResoSlider.setEnabled(hOn);
-        hpfCutoffSlider.setAlpha(hOn ? 1.0f : 0.45f);
-        hpfResoSlider.setAlpha(hOn ? 1.0f : 0.45f);
-    };
-    lpfEnableButton.onStateChange = updateFilterButtonsText;
-    hpfEnableButton.onStateChange = updateFilterButtonsText;
+    lpfEnableButton.onStateChange = [this]() { updateFilterButtonsText(); };
+    hpfEnableButton.onStateChange = [this]() { updateFilterButtonsText(); };
     updateFilterButtonsText();
 
     // Master Voice Settings UI
@@ -449,6 +348,8 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
 
     addChildComponent(masterGlideSlider);
     masterGlideSlider.slider.setTextValueSuffix(" s");
+    masterGlideSlider.setTextBoxWidth(52, 18);
+    masterGlideSlider.slider.setNumDecimalPlacesToDisplay(2);
     masterGlideAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.apvts, "GLIDE_TIME", masterGlideSlider.slider);
 
@@ -509,12 +410,8 @@ WaveSlaveAudioProcessorEditor::WaveSlaveAudioProcessorEditor (WaveSlaveAudioProc
     int initialCount = juce::jlimit(1, 16, (int)audioProcessor.apvts.getRawParameterValue("NUM_PARTIALS")->load());
     partialsContainer.setActiveCount(initialCount);
     partialsComboBox.setSelectedId(initialCount, juce::dontSendNotification);
-    partialsLabel.setVisible(true);
+    partialsLabel.setVisible(false);
     partialsViewport.setVisible(true);
-    if (initialCount == 1)
-        partialsLabel.setText("BASE NOTE ONLY", juce::dontSendNotification);
-    else
-        partialsLabel.setText("PARTIALS  (Base + " + juce::String(initialCount - 1) + (initialCount == 2 ? " Partial)" : " Partials)"), juce::dontSendNotification);
 
     audioProcessor.apvts.state.addListener(this);
     audioProcessor.apvts.addParameterListener("NUM_PARTIALS", this);
@@ -722,12 +619,11 @@ void WaveSlaveAudioProcessorEditor::paint (juce::Graphics& g)
     }
 
     // Category separator line between Output and Envelope / Filter / Voice area
-    bool hasRightSection = mainEnvLabel.isVisible() || lpfSectionLabel.isVisible() || hpfSectionLabel.isVisible() || voiceSectionLabel.isVisible();
+    bool hasRightSection = mainEnvLabel.isVisible() || lpfSectionLabel.isVisible() || voiceSectionLabel.isVisible();
     if (outputLabel.isVisible() && hasRightSection)
     {
         int rightLabelX = mainEnvLabel.isVisible() ? mainEnvLabel.getX()
-                        : (voiceSectionLabel.isVisible() ? voiceSectionLabel.getX()
-                        : (lpfSectionLabel.isVisible() ? lpfSectionLabel.getX() : hpfSectionLabel.getX()));
+                        : (voiceSectionLabel.isVisible() ? voiceSectionLabel.getX() : lpfSectionLabel.getX());
         g.setColour(juce::Colour(0xFF333333));
         float sepColX = (float)rightLabelX - 8.0f;
         float topY = (float)outputLabel.getY() - 2.0f;
@@ -735,6 +631,18 @@ void WaveSlaveAudioProcessorEditor::paint (juce::Graphics& g)
                                                : juce::jmax((float)masterPanSlider.getBottom(), (float)outputLabel.getY() + 65.0f);
         if (sepColX > 0 && botY > topY)
             g.drawLine(sepColX, topY, sepColX, botY, 1.0f);
+
+        if (!oscilloscope.isVisible())
+        {
+            int col3X = susRelEnvLabel.isVisible() ? susRelEnvLabel.getX()
+                      : (hpfSectionLabel.isVisible() ? hpfSectionLabel.getX()
+                      : (voiceModeDescLabel.isVisible() ? voiceModeDescLabel.getX() : 0));
+            if (col3X > 0 && botY > topY)
+            {
+                float sep2X = (float)col3X - 8.0f;
+                g.drawLine(sep2X, topY, sep2X, botY, 1.0f);
+            }
+        }
     }
 }
 
@@ -757,13 +665,8 @@ void WaveSlaveAudioProcessorEditor::updatePartialsLayout(int count)
     count = juce::jlimit(1, 16, count);
     partialsContainer.setActiveCount(count);
     
-    partialsLabel.setVisible(true);
+    partialsLabel.setVisible(false);
     partialsViewport.setVisible(true);
-    
-    if (count == 1)
-        partialsLabel.setText("BASE NOTE ONLY", juce::dontSendNotification);
-    else
-        partialsLabel.setText("PARTIALS  (Base + " + juce::String(count - 1) + (count == 2 ? " Partial)" : " Partials)"), juce::dontSendNotification);
 
     resized();
     repaint();
@@ -1150,6 +1053,253 @@ bool WaveSlaveAudioProcessorEditor::hasAnyParameterDivergedFromSnapshot() const
     return false;
 }
 
+void WaveSlaveAudioProcessorEditor::updateFilterButtonsText()
+{
+    bool lOn = lpfEnableButton.getToggleState();
+    lpfEnableButton.setButtonText(lOn ? "ON" : "OFF");
+    lpfCutoffSlider.setEnabled(lOn);
+    lpfResoSlider.setEnabled(lOn);
+    lpfCutoffSlider.setAlpha(lOn ? 1.0f : 0.45f);
+    lpfResoSlider.setAlpha(lOn ? 1.0f : 0.45f);
+
+    bool hOn = hpfEnableButton.getToggleState();
+    hpfEnableButton.setButtonText(hOn ? "ON" : "OFF");
+    hpfCutoffSlider.setEnabled(hOn);
+    hpfResoSlider.setEnabled(hOn);
+    hpfCutoffSlider.setAlpha(hOn ? 1.0f : 0.45f);
+    hpfResoSlider.setAlpha(hOn ? 1.0f : 0.45f);
+}
+
+void WaveSlaveAudioProcessorEditor::saveProfile()
+{
+    auto userDocs = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory);
+    auto profilesDir = userDocs.getChildFile("WaveSlave").getChildFile("Profiles");
+    if (!profilesDir.exists())
+        profilesDir.createDirectory();
+
+    fileChooser = std::make_unique<juce::FileChooser>(
+        "Save Profile",
+        profilesDir.exists() ? profilesDir : userDocs,
+        "*.waveslave;*.xml");
+
+    auto folderChooserFlags = juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles;
+    fileChooser->launchAsync(folderChooserFlags, [this](const juce::FileChooser& chooser)
+    {
+        juce::File result = chooser.getResult();
+        if (result == juce::File{})
+            return;
+
+        if (!result.hasFileExtension(".waveslave") && !result.hasFileExtension(".xml"))
+            result = result.withFileExtension("waveslave");
+
+        if (result.existsAsFile())
+            result.deleteFile();
+
+        juce::XmlElement profileXml("WaveSlaveProfile");
+        profileXml.setAttribute("version", "1.1");
+        juce::String profName = result.getFileNameWithoutExtension();
+        profileXml.setAttribute("name", profName);
+
+        // 1. APVTS parameter state (includes all 16 partials, master gain, pan, filters, voice, ADSR, velocity)
+        auto state = audioProcessor.apvts.copyState();
+        if (auto paramXml = state.createXml())
+            profileXml.addChildElement(paramXml.release());
+
+        // 2. Custom Wavetables (all 4 slots: sample data + spline control points)
+        auto* wtXml = profileXml.createNewChildElement("CustomWavetables");
+        for (int s = 0; s < 4; ++s)
+        {
+            auto* slotXml = wtXml->createNewChildElement("Slot");
+            slotXml->setAttribute("index", s);
+
+            juce::MemoryOutputStream mos;
+            for (int i = 0; i < 512; ++i)
+                mos.writeFloat(audioProcessor.customWavetables[s][i].load(std::memory_order_relaxed));
+            slotXml->setAttribute("samples", mos.getMemoryBlock().toBase64Encoding());
+
+            const auto& points = oscilloscope.getSlotSplinePoints(s);
+            juce::String ptStr;
+            for (int p = 0; p < (int)points.size(); ++p)
+            {
+                if (p > 0) ptStr << ";";
+                ptStr << juce::String(points[p].x, 4) << "," << juce::String(points[p].y, 4);
+            }
+            slotXml->setAttribute("splinePoints", ptStr);
+        }
+
+        // 3. Per-partial keyframe animations
+        audioProcessor.serializeAnimationsToXml(profileXml);
+
+        // 4. UI / Profile metadata
+        auto* uiXml = profileXml.createNewChildElement("UIState");
+        int activeNum = (int)audioProcessor.apvts.getRawParameterValue("NUM_PARTIALS")->load();
+        uiXml->setAttribute("activePartials", activeNum);
+        uiXml->setAttribute("timelineOpen", isTimelineOpen);
+        uiXml->setAttribute("scopeOpen", isScopeOpen);
+        uiXml->setAttribute("spectrographOpen", isSpecOpen);
+        uiXml->setAttribute("masterPanel", (int)currentMasterPanel);
+        uiXml->setAttribute("activeCustomSlot", oscilloscope.getSlot());
+
+        // Partial minimized states
+        juce::String minStates;
+        const auto& strips = partialsContainer.getStrips();
+        for (int p = 0; p < strips.size(); ++p)
+        {
+            if (p > 0) minStates << ",";
+            minStates << (strips[p]->getIsMinimized() ? "1" : "0");
+        }
+        uiXml->setAttribute("minimizedPartials", minStates);
+
+        if (profileXml.writeTo(result))
+        {
+            factoryPresetBox.setTextWhenNothingSelected(profName);
+            factoryPresetBox.setSelectedId(0, juce::dontSendNotification);
+            recordPresetSnapshot();
+        }
+    });
+}
+
+void WaveSlaveAudioProcessorEditor::loadProfile()
+{
+    auto userDocs = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory);
+    auto profilesDir = userDocs.getChildFile("WaveSlave").getChildFile("Profiles");
+
+    fileChooser = std::make_unique<juce::FileChooser>(
+        "Load Profile",
+        profilesDir.exists() ? profilesDir : userDocs,
+        "*.waveslave;*.xml");
+
+    auto folderChooserFlags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
+    fileChooser->launchAsync(folderChooserFlags, [this](const juce::FileChooser& chooser)
+    {
+        juce::File result = chooser.getResult();
+        if (!result.existsAsFile())
+            return;
+
+        std::unique_ptr<juce::XmlElement> rootXml(juce::XmlDocument::parse(result));
+        if (rootXml == nullptr)
+            return;
+
+        isApplyingPreset = true;
+
+        juce::XmlElement* paramXml = nullptr;
+        juce::XmlElement* wtXml = nullptr;
+
+        if (rootXml->hasTagName("WaveSlaveProfile") || rootXml->hasTagName("WaveSlavePreset"))
+        {
+            paramXml = rootXml->getChildByName(audioProcessor.apvts.state.getType().toString());
+            wtXml = rootXml->getChildByName("CustomWavetables");
+        }
+        else if (rootXml->hasTagName(audioProcessor.apvts.state.getType()))
+        {
+            paramXml = rootXml.get();
+            wtXml = rootXml->getChildByName("CustomWavetables");
+        }
+
+        // 1. APVTS parameters
+        if (paramXml != nullptr)
+        {
+            audioProcessor.apvts.replaceState(juce::ValueTree::fromXml(*paramXml));
+        }
+
+        // 2. Animations (keyframes)
+        audioProcessor.deserializeAnimationsFromXml(*rootXml);
+        if (paramXml != nullptr && paramXml != rootXml.get() && rootXml->getChildByName("PartialAnimations") == nullptr)
+        {
+            audioProcessor.deserializeAnimationsFromXml(*paramXml);
+        }
+
+        // 3. Custom wavetables and spline points
+        if (wtXml != nullptr)
+        {
+            for (auto* slotXml : wtXml->getChildIterator())
+            {
+                int s = slotXml->getIntAttribute("index", -1);
+                if (s >= 0 && s < 4)
+                {
+                    juce::MemoryBlock mb;
+                    mb.fromBase64Encoding(slotXml->getStringAttribute("samples"));
+                    if (mb.getSize() >= 512 * sizeof(float))
+                    {
+                        juce::MemoryInputStream mis(mb, false);
+                        for (int i = 0; i < 512; ++i)
+                            audioProcessor.customWavetables[s][i].store(mis.readFloat(), std::memory_order_relaxed);
+                    }
+
+                    juce::String ptStr = slotXml->getStringAttribute("splinePoints");
+                    if (ptStr.isNotEmpty())
+                    {
+                        std::vector<juce::Point<float>> splineVec;
+                        auto tokens = juce::StringArray::fromTokens(ptStr, ";", "");
+                        for (auto& tok : tokens)
+                        {
+                            auto xy = juce::StringArray::fromTokens(tok, ",", "");
+                            if (xy.size() == 2)
+                                splineVec.push_back({ xy[0].getFloatValue(), xy[1].getFloatValue() });
+                        }
+                        oscilloscope.setSlotSplinePoints(s, splineVec);
+                    }
+                }
+            }
+        }
+
+        // 4. UI / Profile state
+        auto* uiXml = rootXml->getChildByName("UIState");
+        if (uiXml != nullptr)
+        {
+            if (uiXml->hasAttribute("timelineOpen"))
+                isTimelineOpen = uiXml->getBoolAttribute("timelineOpen", true);
+            if (uiXml->hasAttribute("scopeOpen"))
+                isScopeOpen = uiXml->getBoolAttribute("scopeOpen", true);
+            if (uiXml->hasAttribute("spectrographOpen"))
+                isSpecOpen = uiXml->getBoolAttribute("spectrographOpen", true);
+            if (uiXml->hasAttribute("masterPanel"))
+                currentMasterPanel = (SideBarTool::MasterPanel)uiXml->getIntAttribute("masterPanel", (int)SideBarTool::MasterPanel::Envelope);
+            if (uiXml->hasAttribute("activeCustomSlot"))
+                oscilloscope.setSlot(uiXml->getIntAttribute("activeCustomSlot", 0));
+
+            // Restore minimized partial states
+            juce::String minStates = uiXml->getStringAttribute("minimizedPartials");
+            if (minStates.isNotEmpty())
+            {
+                auto tokens = juce::StringArray::fromTokens(minStates, ",", "");
+                auto& strips = partialsContainer.getStrips();
+                for (int p = 0; p < strips.size() && p < tokens.size(); ++p)
+                {
+                    strips[p]->setMinimized(tokens[p].getIntValue() == 1);
+                }
+            }
+        }
+
+        isApplyingPreset = false;
+
+        // Sync all UI controls and partial count
+        int activeNum = (int)audioProcessor.apvts.getRawParameterValue("NUM_PARTIALS")->load();
+        activeNum = juce::jlimit(1, 16, activeNum);
+        partialsComboBox.setSelectedId(activeNum, juce::dontSendNotification);
+        partialsContainer.setActiveCount(activeNum);
+        partialsContainer.refreshAllStrips();
+        updatePartialsLayout(activeNum);
+        updateVoiceDesc();
+        updateFilterButtonsText();
+
+        regenerateButton.setVisible(false);
+
+        juce::String profName = rootXml->getStringAttribute("name", result.getFileNameWithoutExtension());
+        if (profName.isEmpty())
+            profName = result.getFileNameWithoutExtension();
+
+        factoryPresetBox.setSelectedId(0, juce::dontSendNotification);
+        factoryPresetBox.setTextWhenNothingSelected(profName);
+
+        resized();
+        recordPresetSnapshot();
+        spectrograph.syncTimelineControlsToSelectedPartial();
+        oscilloscope.repaint();
+        spectrograph.repaint();
+    });
+}
+
 // --- helper: set one APVTS parameter by ID ----------------------------------
 static void setParam(juce::AudioProcessorValueTreeState& apvts, const juce::String& id, float value)
 {
@@ -1164,6 +1314,7 @@ static void setParam(juce::AudioProcessorValueTreeState& apvts, const juce::Stri
 void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
 {
     isApplyingPreset = true;
+    audioProcessor.allNotesOff();
 
     // Every preset starts from a known clean state so nothing bleeds from previous.
     resetAllPartials();
@@ -1411,21 +1562,16 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
             setParam(ap, "P_DECAY"     + juce::String(i), 0.18f);
             setParam(ap, "P_SUSTAIN"   + juce::String(i), 0.0f);
             setParam(ap, "P_RELEASE"   + juce::String(i), 0.10f);
-            setParam(ap, "MOD_TARGET"  + juce::String(i), 1.0f); // Pitch vibrato
-            setParam(ap, "MOD_DEPTH"   + juce::String(i), 0.015f);
-            setParam(ap, "MOD_RATE"    + juce::String(i), 7.5f);
-            setParam(ap, "MOD_WAVEFORM"+ juce::String(i), 1.0f); // Triangle
-            setParam(ap, "ANIM_MODE"   + juce::String(i), 1.0f); // One-Shot punch animation
-            setParam(ap, "ANIM_CURVE"  + juce::String(i), 0.0f); // Smooth
+            setParam(ap, "MOD_TARGET"  + juce::String(i), 0.0f); // None
+            setParam(ap, "MOD_DEPTH"   + juce::String(i), 0.0f);
+            setParam(ap, "MOD_RATE"    + juce::String(i), 2.0f);
+            setParam(ap, "MOD_WAVEFORM"+ juce::String(i), 0.0f);
+            setParam(ap, "ANIM_MODE"   + juce::String(i), 0.0f);
+            setParam(ap, "ANIM_CURVE"  + juce::String(i), 0.0f);
             setParam(ap, "ANIM_DEPTH"  + juce::String(i), 1.0f);
-            setParam(ap, "ANIM_DURATION"+ juce::String(i), 0.22f);
-
-            PartialAnimationData track;
-            track.keyframes[0] = { 0.0f, ratios[i-1] * 1.15f, juce::jlimit(0.0f, 1.0f, gains[i-1] * 1.15f), 0.0f, 0.0f, 0.0f };
-            track.keyframes[1] = { 1.0f, ratios[i-1],         gains[i-1],                                  0.0f, 0.0f, 0.0f };
-            track.numKeyframes = 2;
-            audioProcessor.setPartialAnimation(i - 1, track);
+            setParam(ap, "ANIM_DURATION"+ juce::String(i), 2.0f);
         }
+        audioProcessor.clearAllKeyframes();
         for (int i = 5; i <= 16; ++i)
             setParam(ap, "GAIN" + juce::String(i), 0.0f);
 
@@ -2032,14 +2178,14 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
     {
         setParam(ap, "NUM_PARTIALS", 3.0f);
         setParam(ap, "VOICE_MODE",   1.0f); // Mono (classic 808 mono bass)
-        setParam(ap, "GLIDE_TIME",   0.035f); // Smooth pitch slides between notes
+        setParam(ap, "GLIDE_TIME",   0.04f); // Smooth pitch slides between notes
         setParam(ap, "BASE_NOTE",    36.0f); // C2 sub foundation
         setParam(ap, "VELOCITY_ENABLED", 1.0f);
 
-        // Clear all partial animation tracks first
+        // Clear all partial animation tracks - authentic 808 does not use keyframe animation
         audioProcessor.clearAllKeyframes();
 
-        // Partial 1: The Sub Boom + Pitch-drop Kick transient
+        // Partial 1: The Sub Boom
         setParam(ap, "WAVEFORM1",     0.0f); // Pure Sine
         setParam(ap, "RATIO1",        1.0f); // Sub Fundamental
         setParam(ap, "SEMITONE1",     0.0f);
@@ -2047,59 +2193,40 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
         setParam(ap, "DETUNE1",       0.0f);
         setParam(ap, "PAN1",          0.0f);
         setParam(ap, "MOD_TARGET1",   0.0f); // No LFO
+        setParam(ap, "ANIM_MODE1",    0.0f); // No Animation
+        setParam(ap, "ANIM_CURVE1",   0.0f);
+        setParam(ap, "ANIM_DEPTH1",   1.0f);
+        setParam(ap, "P_ADSR_ENABLED1", 1.0f);
         setParam(ap, "P_ATTACK1",     0.002f); // Snappy instant attack
-        setParam(ap, "P_DECAY1",      2.2f);   // Long booming decay
-        setParam(ap, "P_SUSTAIN1",    0.18f);  // Sustained body
+        setParam(ap, "P_DECAY1",      2.0f);   // Long booming decay
+        setParam(ap, "P_SUSTAIN1",    0.20f);  // Sustained body
         setParam(ap, "P_RELEASE1",    0.35f);
-
-        // Keyframe Animation on Partial 1: Pitch sweep attack (+18 semitones -> 0 semitones in 0.065s)
-        setParam(ap, "ANIM_MODE1",     2.0f); // Time: One-Shot
-        setParam(ap, "ANIM_DURATION1", 0.065f); // Fast punchy transient drop
-        setParam(ap, "ANIM_CURVE1",    0.0f); // Smooth curve
-        setParam(ap, "ANIM_DEPTH1",    1.0f);
-
-        PartialKeyframe kf0;
-        kf0.time = 0.0f;
-        kf0.ratio = 1.0f;
-        kf0.gain = 1.0f;
-        kf0.semitone = 18.0f; // High punch at start of hit
-        kf0.detune = 0.0f;
-        kf0.pan = 0.0f;
-
-        PartialKeyframe kf1;
-        kf1.time = 1.0f;
-        kf1.ratio = 1.0f;
-        kf1.gain = 1.0f;
-        kf1.semitone = 0.0f; // Drops to root pitch
-        kf1.detune = 0.0f;
-        kf1.pan = 0.0f;
-
-        audioProcessor.addOrUpdateKeyframe(0, kf0, 0.001f);
-        audioProcessor.addOrUpdateKeyframe(0, kf1, 0.001f);
 
         // Partial 2: 2nd Harmonic (Octave 2.0x) - Saturation / speaker body
         setParam(ap, "WAVEFORM2",     0.0f); // Pure Sine
         setParam(ap, "RATIO2",        2.0f); // Octave overtone
         setParam(ap, "SEMITONE2",     0.0f);
-        setParam(ap, "GAIN2",         0.28f);
+        setParam(ap, "GAIN2",         0.22f);
         setParam(ap, "DETUNE2",       0.0f);
         setParam(ap, "PAN2",          0.0f);
         setParam(ap, "MOD_TARGET2",   0.0f);
         setParam(ap, "ANIM_MODE2",    0.0f);
+        setParam(ap, "P_ADSR_ENABLED2", 1.0f);
         setParam(ap, "P_ATTACK2",     0.002f);
-        setParam(ap, "P_DECAY2",      0.55f); // Decays quickly, giving punch then leaving clean sub
+        setParam(ap, "P_DECAY2",      0.50f); // Decays quickly, giving punch then leaving clean sub
         setParam(ap, "P_SUSTAIN2",    0.04f);
         setParam(ap, "P_RELEASE2",    0.20f);
 
-        // Partial 3: 3rd Harmonic (3.0x) - Transient beater click
+        // Partial 3: 3rd Harmonic (3.0x) - Transient punch
         setParam(ap, "WAVEFORM3",     0.0f); // Sine
         setParam(ap, "RATIO3",        3.0f); // 3rd harmonic
         setParam(ap, "SEMITONE3",     0.0f);
-        setParam(ap, "GAIN3",         0.14f);
+        setParam(ap, "GAIN3",         0.10f);
         setParam(ap, "DETUNE3",       0.0f);
         setParam(ap, "PAN3",          0.0f);
         setParam(ap, "MOD_TARGET3",   0.0f);
         setParam(ap, "ANIM_MODE3",    0.0f);
+        setParam(ap, "P_ADSR_ENABLED3", 1.0f);
         setParam(ap, "P_ATTACK3",     0.001f);
         setParam(ap, "P_DECAY3",      0.10f); // Quick transient click
         setParam(ap, "P_SUSTAIN3",    0.0f);
@@ -2266,11 +2393,20 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
     {
         factoryPresetBox.setTextWhenNothingSelected("Presets");
         factoryPresetBox.setSelectedId(0, juce::dontSendNotification);
+        regenerateButton.setVisible(false);
+        resized();
     }
     else if (index == 18) // Random
     {
         factoryPresetBox.setTextWhenNothingSelected("Random");
         factoryPresetBox.setSelectedId(0, juce::dontSendNotification);
+        regenerateButton.setVisible(true);
+        resized();
+    }
+    else
+    {
+        regenerateButton.setVisible(false);
+        resized();
     }
 }
 
@@ -2279,24 +2415,30 @@ void WaveSlaveAudioProcessorEditor::resized()
     auto area = getLocalBounds();
 
     // Top Header row across full width
-    auto headerArea = area.removeFromTop(34).reduced(10, 3);
-    titleLabel.setBounds(headerArea.removeFromLeft(160));
+    auto headerArea = area.removeFromTop(36).reduced(10, 4);
 
-    // Header dropdowns (Right-to-left: Partials, Presets, Edit, File)
-    partialsComboBox.setBounds(headerArea.removeFromRight(115).reduced(2, 2));
-    headerArea.removeFromRight(4);
-    factoryPresetBox.setBounds(headerArea.removeFromRight(105).reduced(2, 2));
-    headerArea.removeFromRight(4);
-    editMenuBox.setBounds(headerArea.removeFromRight(70).reduced(2, 2));
-    headerArea.removeFromRight(4);
-    fileMenuBox.setBounds(headerArea.removeFromRight(72).reduced(2, 2));
+    // Left side: Title + File & Edit menus
+    titleLabel.setBounds(headerArea.removeFromLeft(125));
+    headerArea.removeFromLeft(8);
+    fileMenuBox.setBounds(headerArea.removeFromLeft(68));
+    headerArea.removeFromLeft(4);
+    editMenuBox.setBounds(headerArea.removeFromLeft(68));
+
+    // Right side: Partials count dropdown (aligned directly above right partials column) + Preset selector
+    partialsComboBox.setBounds(headerArea.removeFromRight(120));
     headerArea.removeFromRight(8);
+    if (regenerateButton.isVisible())
+    {
+        regenerateButton.setBounds(headerArea.removeFromRight(88).reduced(0, 1));
+        headerArea.removeFromRight(6);
+    }
+    factoryPresetBox.setBounds(headerArea.removeFromRight(150));
 
     // Main workspace below header
     auto mainWorkspace = area.reduced(10);
 
     // Sidebar tool docked on the left
-    auto sidebarArea = mainWorkspace.removeFromLeft(52);
+    auto sidebarArea = mainWorkspace.removeFromLeft(54);
     sideBar.setBounds(sidebarArea);
     mainWorkspace.removeFromLeft(8); // Spacing between sidebar and content
 
@@ -2327,22 +2469,25 @@ void WaveSlaveAudioProcessorEditor::resized()
             // Right Column: MAIN ENVELOPE (Attack, Decay, Sustain, Release)
             int colSpacing = 16;
             int totalW = masterArea.getWidth();
-            int leftColW = juce::jmax(150, juce::jmin(180, (totalW - colSpacing) / 3));
+            int leftColW = juce::jmax(180, juce::jmin(230, (totalW * 38) / 100));
 
             // Left Column: OUTPUT
             auto leftCol = masterArea.removeFromLeft(leftColW);
             masterArea.removeFromLeft(colSpacing);
 
-            // Center vertically within 200px height (Output takes ~74px)
-            int leftPadY = juce::jmax(0, (masterArea.getHeight() - 74) / 2);
+            // Center vertically within 200px height (Output takes ~94px)
+            int leftPadY = juce::jmax(0, (masterArea.getHeight() - 94) / 2);
             leftCol.removeFromTop(leftPadY);
 
             // Group 1: OUTPUT
-            outputLabel.setBounds(leftCol.removeFromTop(16));
-            leftCol.removeFromTop(4);
-            masterGainSlider.setBounds(leftCol.removeFromTop(24));
+            outputLabel.setBounds(leftCol.removeFromTop(18));
             leftCol.removeFromTop(6);
-            masterPanSlider.setBounds(leftCol.removeFromTop(24));
+            int sliderH = 28;
+            masterGainSlider.setLabelWidth(55);
+            masterGainSlider.setBounds(leftCol.removeFromTop(sliderH));
+            leftCol.removeFromTop(8);
+            masterPanSlider.setLabelWidth(55);
+            masterPanSlider.setBounds(leftCol.removeFromTop(sliderH));
 
             // Right Column: MAIN ENVELOPE, VOICE, or FILTER CONTROLS
             auto eCol = masterArea;
@@ -2350,7 +2495,9 @@ void WaveSlaveAudioProcessorEditor::resized()
             eCol.removeFromTop(rightPadY);
 
             // Hide all by default
+            mainEnvLabel.setText("ENVELOPE", juce::dontSendNotification);
             mainEnvLabel.setVisible(false);
+            susRelEnvLabel.setVisible(false);
             attackVSlider.setVisible(false);
             decayVSlider.setVisible(false);
             sustainVSlider.setVisible(false);
@@ -2452,23 +2599,30 @@ void WaveSlaveAudioProcessorEditor::resized()
         else
         {
             // Wide mode (full width bottom bar): 84px height
+            // 3 evenly spaced columns: Col 1 (Output), Col 2 (First half of panel), Col 3 (Second half of panel)
             int colSpacing = 16;
             int totalW = masterArea.getWidth();
-            int outW = juce::jmax(160, juce::jmin(220, (totalW * 20) / 100));
+            int colW = (totalW - 2 * colSpacing) / 3;
+
+            auto col1 = masterArea.removeFromLeft(colW);
+            masterArea.removeFromLeft(colSpacing);
+            auto col2 = masterArea.removeFromLeft(colW);
+            masterArea.removeFromLeft(colSpacing);
+            auto col3 = masterArea;
 
             // Group 1: OUTPUT
-            auto outCol = masterArea.removeFromLeft(outW);
-            masterArea.removeFromLeft(colSpacing);
-            outputLabel.setBounds(outCol.removeFromTop(16));
-            outCol.removeFromTop(2);
-            masterGainSlider.setBounds(outCol.removeFromTop(24));
-            outCol.removeFromTop(4);
-            masterPanSlider.setBounds(outCol.removeFromTop(24));
+            outputLabel.setBounds(col1.removeFromTop(18));
+            col1.removeFromTop(4);
+            int sliderH = 26;
+            masterGainSlider.setLabelWidth(55);
+            masterGainSlider.setBounds(col1.removeFromTop(sliderH));
+            col1.removeFromTop(6);
+            masterPanSlider.setLabelWidth(55);
+            masterPanSlider.setBounds(col1.removeFromTop(sliderH));
 
-            // Group 2: ENVELOPE, VOICE, OR FILTERS
-            auto eCol = masterArea;
-
+            // Hide all by default
             mainEnvLabel.setVisible(false);
+            susRelEnvLabel.setVisible(false);
             attackVSlider.setVisible(false);
             decayVSlider.setVisible(false);
             sustainVSlider.setVisible(false);
@@ -2490,87 +2644,86 @@ void WaveSlaveAudioProcessorEditor::resized()
 
             if (currentMasterPanel == SideBarTool::MasterPanel::Envelope)
             {
+                mainEnvLabel.setText("ATTACK / DECAY", juce::dontSendNotification);
                 mainEnvLabel.setVisible(true);
+                mainEnvLabel.setBounds(col2.removeFromTop(18));
+                col2.removeFromTop(4);
+                attackVSlider.setLabelWidth(55);
                 attackVSlider.setVisible(true);
+                attackVSlider.setBounds(col2.removeFromTop(sliderH));
+                col2.removeFromTop(6);
+                decayVSlider.setLabelWidth(55);
                 decayVSlider.setVisible(true);
-                sustainVSlider.setVisible(true);
-                releaseVSlider.setVisible(true);
+                decayVSlider.setBounds(col2.removeFromTop(sliderH));
 
-                mainEnvLabel.setBounds(eCol.removeFromTop(16));
-                eCol.removeFromTop(2);
-                int numSliders = 4;
-                int sp = 8;
-                int sliderW = (eCol.getWidth() - sp * (numSliders - 1)) / numSliders;
-                attackVSlider.setBounds(eCol.removeFromLeft(sliderW));
-                eCol.removeFromLeft(sp);
-                decayVSlider.setBounds(eCol.removeFromLeft(sliderW));
-                eCol.removeFromLeft(sp);
-                sustainVSlider.setBounds(eCol.removeFromLeft(sliderW));
-                eCol.removeFromLeft(sp);
-                releaseVSlider.setBounds(eCol);
+                susRelEnvLabel.setText("SUSTAIN / RELEASE", juce::dontSendNotification);
+                susRelEnvLabel.setVisible(true);
+                susRelEnvLabel.setBounds(col3.removeFromTop(18));
+                col3.removeFromTop(4);
+                sustainVSlider.setLabelWidth(55);
+                sustainVSlider.setVisible(true);
+                sustainVSlider.setBounds(col3.removeFromTop(sliderH));
+                col3.removeFromTop(6);
+                releaseVSlider.setLabelWidth(55);
+                releaseVSlider.setVisible(true);
+                releaseVSlider.setBounds(col3.removeFromTop(sliderH));
             }
             else if (currentMasterPanel == SideBarTool::MasterPanel::Voice)
             {
+                voiceSectionLabel.setText("VOICE ALLOCATION", juce::dontSendNotification);
                 voiceSectionLabel.setVisible(true);
+                voiceSectionLabel.setBounds(col2.removeFromTop(18));
+                col2.removeFromTop(4);
                 masterVoiceBox.setVisible(true);
-                voiceModeDescLabel.setVisible(true);
-
-                voiceSectionLabel.setBounds(eCol.removeFromTop(16));
-                eCol.removeFromTop(8);
-
-                auto row = eCol.removeFromTop(26);
-                int voiceBoxW = 120;
-                masterVoiceBox.setBounds(row.removeFromLeft(voiceBoxW).reduced(0, 1));
-                row.removeFromLeft(16);
+                masterVoiceBox.setBounds(col2.removeFromTop(sliderH).reduced(0, 1));
+                col2.removeFromTop(6);
 
                 bool isPoly = (masterVoiceBox.getSelectedId() <= 1);
                 if (!isPoly)
                 {
                     masterGlideSlider.setVisible(true);
-                    int glideSliderW = 180;
-                    masterGlideSlider.setBounds(row.removeFromLeft(glideSliderW));
-                    row.removeFromLeft(16);
+                    masterGlideSlider.setLabelWidth(55);
+                    masterGlideSlider.setBounds(col2.removeFromTop(sliderH));
                 }
                 else
                 {
                     masterGlideSlider.setVisible(false);
                 }
-                voiceModeDescLabel.setBounds(row);
+
+                voiceModeDescLabel.setVisible(true);
+                voiceModeDescLabel.setBounds(col3);
             }
             else // Filters
             {
                 lpfSectionLabel.setVisible(true);
                 lpfEnableButton.setVisible(true);
-                lpfCutoffSlider.setVisible(true);
-                lpfResoSlider.setVisible(true);
-                hpfSectionLabel.setVisible(true);
-                hpfEnableButton.setVisible(true);
-                hpfCutoffSlider.setVisible(true);
-                hpfResoSlider.setVisible(true);
-
-                int gap = 12;
-                int halfW = (eCol.getWidth() - gap) / 2;
-                auto lpfArea = eCol.removeFromLeft(halfW);
-                eCol.removeFromLeft(gap);
-                auto hpfArea = eCol;
-
-                auto lHeader = lpfArea.removeFromTop(16);
+                auto lHeader = col2.removeFromTop(18);
                 lpfEnableButton.setBounds(lHeader.removeFromRight(32).reduced(0, 1));
                 lHeader.removeFromRight(4);
                 lpfSectionLabel.setBounds(lHeader);
-                lpfArea.removeFromTop(2);
-                lpfCutoffSlider.setBounds(lpfArea.removeFromTop(22));
-                lpfArea.removeFromTop(4);
-                lpfResoSlider.setBounds(lpfArea.removeFromTop(22));
+                col2.removeFromTop(4);
+                lpfCutoffSlider.setLabelWidth(55);
+                lpfCutoffSlider.setVisible(true);
+                lpfCutoffSlider.setBounds(col2.removeFromTop(sliderH));
+                col2.removeFromTop(6);
+                lpfResoSlider.setLabelWidth(55);
+                lpfResoSlider.setVisible(true);
+                lpfResoSlider.setBounds(col2.removeFromTop(sliderH));
 
-                auto hHeader = hpfArea.removeFromTop(16);
+                hpfSectionLabel.setVisible(true);
+                hpfEnableButton.setVisible(true);
+                auto hHeader = col3.removeFromTop(18);
                 hpfEnableButton.setBounds(hHeader.removeFromRight(32).reduced(0, 1));
                 hHeader.removeFromRight(4);
                 hpfSectionLabel.setBounds(hHeader);
-                hpfArea.removeFromTop(2);
-                hpfCutoffSlider.setBounds(hpfArea.removeFromTop(22));
-                hpfArea.removeFromTop(4);
-                hpfResoSlider.setBounds(hpfArea.removeFromTop(22));
+                col3.removeFromTop(4);
+                hpfCutoffSlider.setLabelWidth(55);
+                hpfCutoffSlider.setVisible(true);
+                hpfCutoffSlider.setBounds(col3.removeFromTop(sliderH));
+                col3.removeFromTop(6);
+                hpfResoSlider.setLabelWidth(55);
+                hpfResoSlider.setVisible(true);
+                hpfResoSlider.setBounds(col3.removeFromTop(sliderH));
             }
         }
     };
@@ -2607,13 +2760,11 @@ void WaveSlaveAudioProcessorEditor::resized()
 
         // Partials Grid occupies the remaining workspace (pops up into the empty top space!)
         bool hasPartials = (numPartials > 0);
-        partialsLabel.setVisible(hasPartials);
+        partialsLabel.setVisible(false);
         partialsViewport.setVisible(hasPartials);
 
         if (hasPartials)
         {
-            partialsLabel.setBounds(mainWorkspace.removeFromTop(20));
-            mainWorkspace.removeFromTop(4);
             partialsViewport.setBounds(mainWorkspace);
 
             int vpW = juce::jmax(10, partialsViewport.getWidth() - 14);
@@ -2631,13 +2782,11 @@ void WaveSlaveAudioProcessorEditor::resized()
         auto rightPane = mainWorkspace.removeFromRight(harmonicsWidth);
 
         bool hasPartials = (numPartials > 0);
-        partialsLabel.setVisible(hasPartials);
+        partialsLabel.setVisible(false);
         partialsViewport.setVisible(hasPartials);
 
         if (hasPartials)
         {
-            partialsLabel.setBounds(rightPane.removeFromTop(20));
-            rightPane.removeFromTop(4);
             partialsViewport.setBounds(rightPane);
 
             int vpW = juce::jmax(10, partialsViewport.getWidth() - 14);

@@ -240,9 +240,11 @@ public:
     void setTargetNote(int midiNoteNumber, float velocity, bool isLegatoTransition);
     void setVoiceIndex(int idx) { voiceIndex = idx; }
     bool isActive() const { return adsr.isActive(); }
+    float getCurrentEnvLevel() const { return currentEnvLevel.load(std::memory_order_relaxed); }
 
 private:
     int voiceIndex = 0;
+    std::atomic<float> currentEnvLevel { 0.0f };
     std::array<std::array<std::atomic<float>, 512>, 4>* customWavetables = nullptr;
     std::array<LivePartialVisState, 16>* liveVisStates = nullptr;
     std::atomic<int>* latestActiveVoiceIdx = nullptr;

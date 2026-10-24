@@ -62,6 +62,10 @@ public:
     }
 
     void setLabelWidth(int w) { labelWidth = w; resized(); }
+    void setTextBoxWidth(int w, int h = 16)
+    {
+        slider.setTextBoxStyle(vertical ? juce::Slider::TextBoxBelow : juce::Slider::TextBoxLeft, false, w, h);
+    }
 
     void resized() override
     {
@@ -233,6 +237,7 @@ public:
         pReleaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(apvts, "P_RELEASE" + idSuffix, pReleaseSlider.slider);
 
         addAndMakeVisible(pGlideSlider);
+        pGlideSlider.setTextBoxWidth(48, 16);
         pGlideSlider.slider.setDoubleClickReturnValue(true, 0.0);
         pGlideAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(apvts, "P_GLIDE" + idSuffix, pGlideSlider.slider);
 
@@ -813,6 +818,9 @@ public:
 
     int getActiveCount() const { return activeCount; }
 
+    const juce::OwnedArray<PartialStrip>& getStrips() const { return strips; }
+    juce::OwnedArray<PartialStrip>& getStrips() { return strips; }
+
     void setSelectedPartial(int index, juce::Viewport* viewport = nullptr)
     {
         for (int i = 0; i < strips.size(); ++i)
@@ -983,7 +991,7 @@ public:
         partialsLabel.setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.6f));
         addAndMakeVisible(partialsLabel);
 
-        minAllButton.setButtonText("COLLAPSE");
+        minAllButton.setButtonText("MIN");
         minAllButton.setClickingTogglesState(true);
         minAllButton.setToggleState(false, juce::dontSendNotification);
         minAllButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xFF252525));
@@ -995,7 +1003,7 @@ public:
         minAllButton.onClick = [this]()
         {
             bool min = minAllButton.getToggleState();
-            minAllButton.setButtonText(min ? "EXPAND" : "COLLAPSE");
+            minAllButton.setButtonText(min ? "EXP" : "MIN");
             if (onToggleMinAll) onToggleMinAll(min);
         };
 
@@ -1064,7 +1072,7 @@ public:
 
         setupPanelBtn(voicePanelBtn,  "VOICE",   "View Master Voice & Portamento Settings", false);
         setupPanelBtn(envPanelBtn,    "ENV",     "View Master ADSR Envelope Settings", true);
-        setupPanelBtn(filterPanelBtn, "FILTERS", "View Master Low Pass & High Pass Filters", false);
+        setupPanelBtn(filterPanelBtn, "FLTR",    "View Master Low Pass & High Pass Filters", false);
 
         voicePanelBtn.onClick = [this]()
         {
@@ -1183,8 +1191,9 @@ public:
         performLabel.setBounds(area.removeFromTop(15));
         area.removeFromTop(2);
         velToggle.setBounds(area.removeFromTop(20));
-        area.removeFromTop(3);
-        panicButton.setBounds(area.removeFromTop(20));
+
+        // Panic button anchored cleanly at bottom-left
+        panicButton.setBounds(area.removeFromBottom(24));
     }
 
     void paint(juce::Graphics& g) override
@@ -1299,6 +1308,9 @@ public:
     bool keyPressed(const juce::KeyPress& key) override;
 
     void updateVoiceDesc();
+    void updateFilterButtonsText();
+    void saveProfile();
+    void loadProfile();
 
 private:
     WaveSlaveAudioProcessor& audioProcessor;
@@ -1337,6 +1349,7 @@ private:
 
     // Factory Presets
     juce::ComboBox factoryPresetBox;
+    juce::TextButton regenerateButton;
     juce::ComboBox partialsComboBox;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> partialsAttachment;
 
@@ -1391,7 +1404,7 @@ private:
 
     // Section labels
     juce::Label titleLabel, partialsLabel;
-    juce::Label outputLabel, mainEnvLabel;
+    juce::Label outputLabel, mainEnvLabel, susRelEnvLabel;
 
     // Sidebar view tool
     SideBarTool sideBar;
