@@ -1884,25 +1884,26 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
         setParam(ap, "VOICE_MODE",   0.0f); // Poly
         setParam(ap, "VELOCITY_ENABLED", 1.0f);
 
-        // Irrational/inharmonic cluster ratios that morph together into a thick texture
-        float ratios[8]   = { 1.0f,  1.414f, 2.18f,  3.1416f, 4.67f,  6.283f, 8.53f,  11.37f };
-        float gains[8]    = { 1.0f,  0.75f,  0.65f,  0.55f,   0.45f,  0.38f,  0.30f,  0.22f };
-        float detunes[8]  = { 0.0f,  3.5f,  -4.0f,   2.5f,   -3.0f,   5.0f,  -4.5f,   1.5f };
-        float pans[8]     = { 0.0f, -0.60f,  0.60f, -0.35f,   0.35f, -0.75f,  0.75f,  0.0f };
-        // Tri, Sharkfin, Fibonacci, Saw, Pulse, Tri, Sharkfin, Fibonacci
-        float waves[8]    = { 1.0f,  5.0f,   6.0f,   2.0f,    4.0f,   1.0f,   5.0f,   6.0f };
+        // Pure harmonic overtone series (consonant natural harmonics of a rich major triad)
+        float ratios[8]   = { 1.0f,  2.0f,   3.0f,   4.0f,    5.0f,   6.0f,   8.0f,  10.0f };
+        float gains[8]    = { 1.0f,  0.72f,  0.58f,  0.48f,   0.38f,  0.28f,  0.20f,  0.14f };
+        float detunes[8]  = { 0.0f,  2.0f,  -2.0f,   2.5f,   -2.5f,   1.5f,  -1.5f,   0.0f };
+        float pans[8]     = { 0.0f, -0.45f,  0.45f, -0.30f,   0.30f, -0.70f,  0.70f,  0.0f };
+        // Tri, Sharkfin, Saw, Tri, Pulse, Sharkfin, Sine, Saw
+        float waves[8]    = { 1.0f,  5.0f,   2.0f,   1.0f,    4.0f,   5.0f,   0.0f,   2.0f };
 
-        // Overlapping asynchronous ADSRs - partials bloom and decay at staggered rates
-        float atks[8] = { 0.03f, 0.60f, 1.20f, 0.05f, 1.80f, 0.40f, 0.90f, 1.40f };
-        float decs[8] = { 0.80f, 1.30f, 1.80f, 0.55f, 1.20f, 1.60f, 0.95f, 1.30f };
-        float suss[8] = { 0.90f, 0.60f, 0.70f, 0.35f, 0.65f, 0.55f, 0.45f, 0.35f };
-        float rels[8] = { 1.40f, 1.90f, 2.20f, 0.80f, 2.40f, 1.60f, 2.00f, 2.60f };
+        // Overlapping asynchronous ADSRs - partials swell and bloom organically
+        float atks[8] = { 0.04f, 0.35f, 0.80f, 0.08f, 1.20f, 0.25f, 0.60f, 0.90f };
+        float decs[8] = { 0.80f, 1.30f, 1.60f, 0.60f, 1.20f, 1.50f, 1.00f, 1.30f };
+        float suss[8] = { 0.90f, 0.70f, 0.75f, 0.50f, 0.65f, 0.60f, 0.50f, 0.40f };
+        float rels[8] = { 1.40f, 1.80f, 2.00f, 1.00f, 2.20f, 1.60f, 1.90f, 2.40f };
 
-        // LFO Modulation across all 8 partials:
-        // Targets: 1=Pitch, 2=Level, 3=Pan
-        float modTargets[8] = { 1.0f,   2.0f,   3.0f,   1.0f,   2.0f,   3.0f,   1.0f,   3.0f };
-        float modRates[8]   = { 0.32f,  0.85f,  0.42f,  1.10f,  1.35f,  0.52f,  0.65f,  0.28f };
-        float modDepths[8]  = { 0.035f, 0.45f,  0.70f,  0.055f, 0.50f,  0.80f,  0.045f, 0.65f };
+        // LFO Modulation:
+        // Targets: 0=None, 1=Pitch, 2=Level, 3=Pan
+        // Mod targets focus on spatial panning and level breathing; pitch modulation is gentle tape chorusing
+        float modTargets[8] = { 0.0f,   2.0f,   3.0f,   1.0f,   2.0f,   3.0f,   1.0f,   3.0f };
+        float modRates[8]   = { 0.0f,   0.75f,  0.38f,  0.45f,  1.10f,  0.48f,  0.35f,  0.25f };
+        float modDepths[8]  = { 0.0f,   0.45f,  0.70f,  0.018f, 0.50f,  0.75f,  0.015f, 0.65f };
         float modWaves[8]   = { 0.0f,   1.0f,   2.0f,   0.0f,   1.0f,   0.0f,   1.0f,   2.0f }; // Sine, Tri, Saw...
 
         // Keyframe Animation: dynamic evolving paths across all 8 partials
@@ -1944,22 +1945,19 @@ void WaveSlaveAudioProcessorEditor::applyFactoryPreset(int index)
 
             if (i == 1)
             {
-                // Fundamental partial anchors the root: evolves gain and pan, no semitone pitch shifts
+                // Fundamental partial anchors the root: evolves gain and pan, perfectly harmonic
                 track.keyframes[0] = { 0.0f,  r0, g0,         0.0f, 0.0f,  p0 };
-                track.keyframes[1] = { 0.35f, r0, g0 * 0.75f, 0.0f, 1.5f,  -0.25f };
-                track.keyframes[2] = { 0.70f, r0, g0 * 1.15f, 0.0f, -1.5f,  0.25f };
+                track.keyframes[1] = { 0.35f, r0, g0 * 0.75f, 0.0f, 0.0f, -0.20f };
+                track.keyframes[2] = { 0.70f, r0, g0 * 1.15f, 0.0f, 0.0f,  0.20f };
                 track.keyframes[3] = { 1.0f,  r0, g0,         0.0f, 0.0f,  p0 };
             }
             else
             {
-                // Upper partials: dynamic gain breathing, wide stereo sweeping, analog detune motion, and cohesive micro-semitone shimmer
-                float semiDelta = (i % 2 == 0) ? 0.50f : -0.50f;
-                float rMorph1   = r0 * 1.02f;
-                float rMorph2   = r0 * 0.98f;
-                track.keyframes[0] = { 0.0f,  r0,      g0,                                     0.0f,       d0,                 p0 };
-                track.keyframes[1] = { 0.35f, rMorph1, juce::jlimit(0.05f, 1.0f, g0 * 0.65f),  semiDelta,  -d0 * 0.7f + 5.0f,  -p0 * 0.8f };
-                track.keyframes[2] = { 0.70f, rMorph2, juce::jlimit(0.05f, 1.0f, g0 * 1.20f), -semiDelta,  d0 * 0.5f - 4.0f,   p0 * 1.2f };
-                track.keyframes[3] = { 1.0f,  r0,      g0,                                     0.0f,       d0,                 p0 };
+                // Upper partials: dynamic gain breathing, wide stereo sweeping, subtle analog detune shimmer, zero semitone drift
+                track.keyframes[0] = { 0.0f,  r0, g0,                                     0.0f, d0,                p0 };
+                track.keyframes[1] = { 0.35f, r0, juce::jlimit(0.05f, 1.0f, g0 * 0.65f),  0.0f, -d0 * 0.6f + 2.0f, -p0 * 0.8f };
+                track.keyframes[2] = { 0.70f, r0, juce::jlimit(0.05f, 1.0f, g0 * 1.20f),  0.0f, d0 * 0.5f - 2.0f,   p0 * 1.1f };
+                track.keyframes[3] = { 1.0f,  r0, g0,                                     0.0f, d0,                p0 };
             }
             track.numKeyframes = 4;
             audioProcessor.setPartialAnimation(i - 1, track);
