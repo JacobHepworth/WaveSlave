@@ -171,16 +171,6 @@ public:
                 onParamEditedByUser(partialIndex);
         };
 
-        addAndMakeVisible(detuneSlider);
-        detuneSlider.slider.setDoubleClickReturnValue(true, 0.0);
-        detuneSlider.slider.setTooltip("Fine Detune Tuning (-50 to +50 cents)");
-        detuneAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(apvts, "DETUNE" + idSuffix, detuneSlider.slider);
-        detuneSlider.slider.onValueChange = [this]()
-        {
-            if (detuneSlider.slider.isMouseButtonDown() && onParamEditedByUser)
-                onParamEditedByUser(partialIndex);
-        };
-
         addAndMakeVisible(gainSlider);
         gainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(apvts, "GAIN" + idSuffix, gainSlider.slider);
         gainSlider.slider.onValueChange = [this]()
@@ -437,7 +427,6 @@ public:
         ratioSlider.setVisible(full);
         gainSlider.setVisible(enabled);
         semitoneSlider.setVisible(full);
-        detuneSlider.setVisible(full);
         panSlider.setVisible(full);
 
         bool adsrSecVis = full && showAdsr;
@@ -578,11 +567,7 @@ public:
         gainSlider.setBounds(area.removeFromTop(sliderH));
         area.removeFromTop(4);
 
-        auto tuneRow = area.removeFromTop(sliderH);
-        int halfW = (tuneRow.getWidth() - 4) / 2;
-        semitoneSlider.setBounds(tuneRow.removeFromLeft(halfW));
-        tuneRow.removeFromLeft(4);
-        detuneSlider.setBounds(tuneRow);
+        semitoneSlider.setBounds(area.removeFromTop(sliderH));
         area.removeFromTop(4);
 
         panSlider.setBounds(area.removeFromTop(sliderH));
@@ -674,8 +659,7 @@ private:
     juce::ComboBox waveformBox;
     LabeledSlider ratioSlider    { "Ratio", false, 44 };
     LabeledSlider gainSlider     { "Level", false, 44 };
-    LabeledSlider semitoneSlider { "Semi",  false, 30 };
-    LabeledSlider detuneSlider   { "Fine",  false, 28 };
+    LabeledSlider semitoneSlider { "Semi",  false, 44 };
     LabeledSlider panSlider      { "Pan",   false, 44 };
 
     // Per-Partial ADSR
@@ -708,7 +692,6 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> waveformAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> ratioAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> semitoneAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> detuneAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> gainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> panAttachment;
 

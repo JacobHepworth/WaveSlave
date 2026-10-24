@@ -2571,7 +2571,7 @@ void Spectrograph::paint(juce::Graphics& g)
             ? (isLocked ? "Fixed 20Hz - 20kHz scale | Nodes locked (keyframing active)"
                         : "Fixed 20Hz - 20kHz scale | Live harmonic tracking")
             : (isLocked ? "Sliding harmonic scale | Nodes locked (keyframing active)"
-                        : "Sliding harmonic scale | Drag: Ratio & Gain - Alt: Snap - Shift: Fine - Ctrl: Semi");
+                        : "Sliding harmonic scale | Drag: Ratio & Gain - Alt: Snap - Ctrl: Semi");
     g.drawText(subStr, (int)left, 18, maxTitleW, 12, juce::Justification::centredLeft);
 }
 
@@ -2966,16 +2966,7 @@ void Spectrograph::mouseDrag(const juce::MouseEvent& e)
     // Keyframe at playhead when timeline is open and paused; otherwise shift existing keyframes (or update dragged waypoint diamond)
     bool shouldUpdateKfAtPlayhead = (animMode > 0) && isTimelineOpen && !isPreviewPlaying;
 
-    if (e.mods.isShiftDown())
-    {
-        // Shift: Fine Detune
-        float deltaX = e.position.x - dragStartMouse.x;
-        float newDetune = juce::jlimit(-50.0f, 50.0f, initialDetune + deltaX * 0.5f);
-        currentKf.detune = newDetune;
-        if (auto* dp = processor.apvts.getParameter("DETUNE" + idSuffix))
-            dp->setValueNotifyingHost(dp->convertTo0to1(newDetune));
-    }
-    else if (e.mods.isCommandDown() || e.mods.isCtrlDown())
+    if (e.mods.isCommandDown() || e.mods.isCtrlDown())
     {
         // Ctrl/Cmd: Semitone offset
         float deltaY = dragStartMouse.y - e.position.y;
